@@ -1,0 +1,24 @@
+# Ablation A0: ImageNet -> APTOS directly, no EyePACS pretraining.
+# Same settings as finetune_aptos.yaml otherwise, so the comparison is fair.
+experiment:
+  name: baseline_aptos
+  out_dir: outputs
+data:
+  manifest: cache/aptos.csv
+preprocess:
+  size: 512
+  ben_graham: true
+model:
+  backbone: efficientnet_b3
+  head: regression
+  pretrained: true
+train:
+  init_from: null
+  image_size: 512
+  epochs: 15
+  batch_size: 16
+  lr: 1.0e-3
+  backbone_lr_mult: 0.3
+  warmup_epochs: 1
+  freeze_epochs: 1
+  sampler_power: 0.3

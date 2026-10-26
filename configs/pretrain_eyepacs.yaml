@@ -1,0 +1,27 @@
+# Stage 1: pretrain on EyePACS 2015 (large, noisy labels).
+# ~12 epochs at 512 px on a Kaggle T4 needs 2-3 sessions; continue with
+#   python scripts/train.py --config configs/pretrain_eyepacs.yaml --resume outputs/pretrain_eyepacs/last.pt
+experiment:
+  name: pretrain_eyepacs
+  out_dir: outputs
+data:
+  manifest: cache/eyepacs.csv
+  train_splits: [train]
+  val_splits: [val]
+preprocess:
+  size: 512
+  ben_graham: true
+model:
+  backbone: efficientnet_b3
+  head: regression
+  pretrained: true   # ImageNet
+train:
+  image_size: 512
+  epochs: 12
+  batch_size: 16
+  lr: 1.0e-3
+  backbone_lr_mult: 0.3
+  warmup_epochs: 1
+  freeze_epochs: 1
+  sampler_power: 0.5   # EyePACS is ~73% grade 0
+  num_workers: 4

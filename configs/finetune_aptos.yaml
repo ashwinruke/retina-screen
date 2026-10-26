@@ -1,0 +1,27 @@
+# Stage 2: fine-tune on APTOS 2019, starting from the stage 1 checkpoint.
+# This is the main experiment (A1).
+experiment:
+  name: finetune_aptos
+  out_dir: outputs
+data:
+  manifest: cache/aptos.csv
+  train_splits: [train]
+  val_splits: [val]
+preprocess:
+  size: 512
+  ben_graham: true
+model:
+  backbone: efficientnet_b3
+  head: regression
+  pretrained: true
+train:
+  init_from: outputs/pretrain_eyepacs/best.pt
+  image_size: 512
+  epochs: 15
+  batch_size: 16
+  lr: 3.0e-4
+  backbone_lr_mult: 0.33
+  warmup_epochs: 1
+  freeze_epochs: 0
+  sampler_power: 0.3
+  num_workers: 4

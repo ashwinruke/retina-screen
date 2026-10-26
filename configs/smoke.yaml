@@ -1,0 +1,23 @@
+# Tiny CPU-friendly config used by tests and for dry runs on synthetic data.
+experiment:
+  name: smoke
+  out_dir: outputs
+data:
+  manifest: data/synthetic_cache/aptos.csv
+preprocess:
+  size: 128
+  ben_graham: true
+model:
+  backbone: resnet18
+  head: regression
+  pretrained: false
+  drop_path: 0.0
+train:
+  image_size: 96
+  epochs: 2
+  batch_size: 8
+  lr: 1.0e-3
+  warmup_epochs: 0
+  num_workers: 0
+  amp: false
+  tta: true

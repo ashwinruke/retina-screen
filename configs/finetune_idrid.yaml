@@ -1,0 +1,29 @@
+# Ablation A4 (optional stage 3): adapt the stage 2 model to IDRiD with its
+# 413 training images, then report on the 103 official test images.
+# IDRiD has no separate val set and the test split must stay untouched, so
+# "validation" here is just the train split (a progress signal, not model
+# selection). Train a fixed, small number of epochs and evaluate last.pt on the
+# IDRiD test split.
+experiment:
+  name: finetune_idrid
+  out_dir: outputs
+data:
+  manifest: cache/idrid.csv
+  train_splits: [train]
+  val_splits: [train]
+preprocess:
+  size: 512
+  ben_graham: true
+model:
+  backbone: efficientnet_b3
+  head: regression
+  pretrained: false
+train:
+  init_from: outputs/finetune_aptos/best.pt
+  image_size: 512
+  epochs: 5
+  batch_size: 16
+  lr: 1.0e-4
+  backbone_lr_mult: 0.3
+  warmup_epochs: 0
+  sampler_power: 0.0

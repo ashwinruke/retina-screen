@@ -1,0 +1,10 @@
+# Hugging Face Space requirements (CPU). Torch CPU wheels keep the image small.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+timm>=0.9.16
+albumentations>=1.4
+opencv-python-headless>=4.8
+numpy
+pyyaml
+scikit-learn
+huggingface_hub
