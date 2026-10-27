@@ -75,6 +75,55 @@ def circular_mask(img: np.ndarray, scale: float = 0.95, fill: int = 0) -> np.nda
     return out
 
 
+def fundus_mask(img: np.ndarray, threshold: int = 10) -> np.ndarray:
+    """uint8 mask (1 = retina, 0 = black background or padding).
+
+    Small dark holes inside the retina (vessels, haemorrhages) are closed so
+    they stay part of the retina.
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    mask = (gray > threshold).astype(np.uint8)
+    k = max(3, img.shape[0] // 50) | 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+
+def ben_graham_masked(
+    img: np.ndarray, sigma_frac: float = 1 / 30, erode_frac: float = 0.02
+) -> np.ndarray:
+    """Ben Graham normalisation without edge artefacts.
+
+    Plain Ben Graham blurs the black background into the retina's edge,
+    which leaves bright and dark bands wherever the retina meets black:
+    around the circle and, worse, along the flat top/bottom of photos that
+    clip the retina. Those bands depend on the camera, not the disease, so
+    a model can learn them as a shortcut.
+
+    Here the local average is a normalised convolution: blur(img * mask) /
+    blur(mask), i.e. the average of nearby *retina* pixels only, so the
+    background never leaks in. A thin rim is masked off afterwards to drop
+    anti-aliased edge pixels.
+    """
+    mask = fundus_mask(img)
+    if mask.mean() < 0.05:  # no usable retina found; fall back to plain version
+        return ben_graham(img, sigma_frac)
+    # Drop the anti-aliased edge pixels (half retina, half black) first, so
+    # they don't drag the local average down near the edge.
+    k = max(3, int(img.shape[0] * erode_frac)) | 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    # Treat outside the image as background, so the mask also shrinks where
+    # the retina touches the image border (OpenCV's default doesn't).
+    inner = cv2.erode(mask, kernel, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+    sigma = img.shape[0] * sigma_frac
+    m = inner.astype(np.float32)
+    num = cv2.GaussianBlur(img.astype(np.float32) * m[..., None], (0, 0), sigma)
+    den = cv2.GaussianBlur(m, (0, 0), sigma)[..., None]
+    local_mean = num / np.maximum(den, 1e-3)
+    out = np.clip(4 * img.astype(np.float32) - 4 * local_mean + 128, 0, 255).astype(np.uint8)
+    out[inner == 0] = BEN_BACKGROUND
+    return out
+
+
 def crop_and_resize(img: np.ndarray, size: int) -> np.ndarray:
     """Crop the border, pad to square and resize. No colour normalisation."""
     img = pad_to_square(crop_to_fundus(img))
@@ -90,7 +139,7 @@ def preprocess_fundus(
     """Full preprocessing used for both training and inference."""
     img = crop_and_resize(img, size)
     if use_ben_graham:
-        img = ben_graham(img)
+        img = ben_graham_masked(img)
         img = circular_mask(img, scale=mask_scale, fill=BEN_BACKGROUND)
     return img
 
