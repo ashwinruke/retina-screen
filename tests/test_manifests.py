@@ -26,3 +26,26 @@ def test_idrid_official_split(manifests_dir):
     assert df["split"].value_counts().to_dict() == {"train": 20, "test": 10}
     assert "dme_risk" in df.columns
     assert df["grade"].between(0, 4).all()
+
+
+def test_locate_dataset(synthetic):
+    from retina.manifests import locate_dataset
+
+    assert locate_dataset("aptos", synthetic) == synthetic / "aptos"
+    assert locate_dataset("eyepacs", synthetic) == synthetic / "eyepacs"
+    # IDRiD labels live in "2. Groundtruths"; images in a sibling folder.
+    assert locate_dataset("idrid", synthetic) == synthetic / "idrid" / "B. Disease Grading"
+
+
+def test_auto_flag_and_helpful_error(synthetic, tmp_path):
+    from conftest import ROOT, run
+
+    out = run(ROOT / "scripts/prepare_data.py", "--aptos", "auto", "--idrid", "auto",
+              "--search-root", synthetic, "--out-dir", tmp_path)
+    assert (tmp_path / "aptos.csv").exists() and (tmp_path / "idrid.csv").exists()
+    assert "Located aptos" in out
+
+    import pytest
+    with pytest.raises(AssertionError, match="Could not find a eyepacs label CSV"):
+        run(ROOT / "scripts/prepare_data.py", "--eyepacs", "auto",
+            "--search-root", synthetic / "aptos", "--out-dir", tmp_path)

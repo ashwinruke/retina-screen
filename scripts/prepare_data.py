@@ -1,7 +1,10 @@
 """Build manifests (CSV of image path, grade, patient, split) for each dataset.
 
-Point each flag at the folder you attached on Kaggle (or downloaded locally).
-Folder names inside don't matter: label CSVs and images are found by search.
+Point each flag at the folder you attached on Kaggle (or downloaded locally),
+or pass `auto` to search /kaggle/input for it. Folder names inside don't
+matter: label CSVs and images are found by search.
+
+    python scripts/prepare_data.py --aptos auto --out-dir data/manifests
 
     python scripts/prepare_data.py \
         --aptos /kaggle/input/aptos2019-blindness-detection \
@@ -29,10 +32,18 @@ def main() -> None:
     ap.add_argument("--no-dedup", action="store_true", help="Skip APTOS duplicate removal")
     ap.add_argument("--eyepacs-train-only", action="store_true", help="Ignore released EyePACS test labels")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--search-root", default=str(manifests.KAGGLE_INPUT),
+                    help="Where `auto` looks for datasets (default: /kaggle/input)")
     args = ap.parse_args()
 
     if not (args.aptos or args.eyepacs or args.idrid):
         ap.error("Pass at least one of --aptos, --eyepacs, --idrid")
+
+    # `auto` searches /kaggle/input (or --search-root) for the dataset's label CSV.
+    for name in ("aptos", "eyepacs", "idrid"):
+        value = getattr(args, name)
+        if value == ["auto"]:
+            setattr(args, name, [manifests.locate_dataset(name, args.search_root)])
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)

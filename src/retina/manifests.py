@@ -25,14 +25,68 @@ COLUMNS = ["image_id", "image_path", "grade", "dataset", "patient_id", "split"]
 
 # ---------------------------------------------------------------- helpers ---
 
+KAGGLE_INPUT = Path("/kaggle/input")
+
+# Columns that identify each dataset's label CSV.
+LABEL_COLUMNS = {
+    "aptos": {"id_code", "diagnosis"},
+    "eyepacs": {"image", "level"},
+    "idrid": {"Image name", "Retinopathy grade"},
+}
+
+
+def _listing(root: Path, depth: int = 2) -> str:
+    """Folders under ``root`` up to ``depth`` levels, for error messages."""
+    if not root.exists():
+        return f"  ({root} does not exist)"
+    lines = []
+    for p in sorted(root.rglob("*")):
+        rel = p.relative_to(root)
+        if p.is_dir() and len(rel.parts) <= depth:
+            lines.append(f"  {p}")
+    return "\n".join(lines[:40]) or f"  ({root} is empty)"
+
+
 def _as_paths(roots: str | Path | Sequence[str | Path]) -> list[Path]:
     if isinstance(roots, (str, Path)):
         roots = [roots]
     paths = [Path(r) for r in roots]
     for p in paths:
         if not p.exists():
-            raise FileNotFoundError(f"Dataset folder not found: {p}")
+            hint = ""
+            if KAGGLE_INPUT.exists():
+                hint = (
+                    f"\nFolders under {KAGGLE_INPUT}:\n{_listing(KAGGLE_INPUT)}\n"
+                    "Pass one of these, or pass `auto` to find it automatically."
+                )
+            raise FileNotFoundError(f"Dataset folder not found: {p}{hint}")
     return paths
+
+
+def _has_images(folder: Path) -> bool:
+    return any(p.suffix.lower() in IMAGE_EXTS for p in folder.rglob("*"))
+
+
+def locate_dataset(name: str, search_root: str | Path = KAGGLE_INPUT) -> Path:
+    """Find a dataset's folder by looking for its label CSV under ``search_root``.
+
+    Starts at the folder holding the CSV and moves up until it reaches a
+    folder that also contains images (IDRiD keeps labels and images in
+    sibling folders). Raises if no match is found.
+    """
+    search_root = Path(search_root)
+    required = LABEL_COLUMNS[name]
+    csvs = find_label_csvs([search_root], required) if search_root.exists() else []
+    if not csvs:
+        raise FileNotFoundError(
+            f"Could not find a {name} label CSV (columns {sorted(required)}) under "
+            f"{search_root}. Is the dataset attached?\n{_listing(search_root)}"
+        )
+    folder = csvs[0].parent
+    while not _has_images(folder) and folder != search_root and folder.parent != folder:
+        folder = folder.parent
+    log.info("Located %s at %s", name, folder)
+    return folder
 
 
 def index_images(roots: Iterable[Path]) -> dict[str, Path]:
