@@ -47,6 +47,10 @@ def optimize_thresholds(
     """
     scores = np.asarray(scores, dtype=float)
     y_true = np.asarray(y_true, dtype=int)
+    finite = np.isfinite(scores)
+    if not finite.any():
+        raise ValueError("All scores are NaN/inf; cannot fit thresholds.")
+    scores, y_true = scores[finite], y_true[finite]
     t = list(map(float, init))
     best = qwk(y_true, scores_to_grades(scores, t))
     for _ in range(passes):
@@ -62,7 +66,7 @@ def optimize_thresholds(
                     best, t, improved = k, trial, True
         if not improved:
             break
-    return t
+    return sorted(t)
 
 
 def referable_metrics(

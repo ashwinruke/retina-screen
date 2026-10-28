@@ -81,6 +81,12 @@ def class_balanced_sampler(grades: np.ndarray, power: float) -> WeightedRandomSa
     )
 
 
+def _worker_init(_: int) -> None:
+    # Each DataLoader worker is already one parallel process; letting OpenCV
+    # also spawn a thread per CPU core oversubscribes Kaggle's 4 cores.
+    cv2.setNumThreads(1)
+
+
 def make_loader(
     df: pd.DataFrame,
     image_size: int,
@@ -101,4 +107,5 @@ def make_loader(
         pin_memory=torch.cuda.is_available(),
         drop_last=train and len(ds) > batch_size,
         persistent_workers=num_workers > 0,
+        worker_init_fn=_worker_init if num_workers > 0 else None,
     )

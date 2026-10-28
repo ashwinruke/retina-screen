@@ -33,3 +33,23 @@ def test_load_weights_skips_mismatched_head(tmp_path):
     w_src = src.backbone.conv1.weight
     assert torch.equal(dst.backbone.conv1.weight, w_src)
     assert dst.fc.weight.shape == (1, 512)
+
+
+def test_predict_reports_broken_model_clearly():
+    import math
+
+    import pytest
+    from torch.utils.data import DataLoader, TensorDataset
+
+    from retina.engine import predict
+
+    model = _model()
+    with torch.no_grad():
+        model.backbone.bn1.running_var.fill_(-1.0)  # sqrt(negative) -> NaN in eval
+    loader = DataLoader(TensorDataset(torch.randn(4, 3, 64, 64), torch.zeros(4, dtype=torch.long)), batch_size=2)
+    with pytest.raises(RuntimeError, match="NaN/inf"):
+        predict(model, loader, torch.device("cpu"), tta=True, amp=False)
+
+    fresh = _model()
+    scores, _ = predict(fresh, loader, torch.device("cpu"), tta=True, amp=False)
+    assert all(math.isfinite(s) for s in scores)

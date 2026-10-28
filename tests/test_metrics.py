@@ -35,3 +35,12 @@ def test_referable_and_report():
     rep = full_report(s, y, DEFAULT_THRESHOLDS)
     assert rep["qwk"] == 1.0 and rep["n"] == 6
     assert np.array(rep["confusion_matrix"]).trace() == 6
+
+
+def test_optimize_thresholds_ignores_nan_and_inf():
+    rng = np.random.default_rng(1)
+    y = rng.integers(0, 5, 300)
+    scores = y + rng.normal(0, 0.3, 300)
+    scores[[3, 10]] = [np.nan, np.inf]
+    t = optimize_thresholds(scores, y)
+    assert t == sorted(t) and all(np.isfinite(t))

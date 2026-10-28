@@ -27,6 +27,8 @@ def seed_everything(seed: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    # Input size is fixed, so let cuDNN pick the fastest conv algorithms.
+    torch.backends.cudnn.benchmark = True
 
 
 def unwrap(model: nn.Module) -> RetinaModel:
@@ -41,20 +43,53 @@ def predict(
     tta: bool = False,
     amp: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return (severity scores on 0..4 scale, true grades)."""
+    """Return (severity scores on 0..4 scale, true grades).
+
+    If a batch gives non-finite scores in fp16 (overflow), it is recomputed in
+    fp32. If scores are still non-finite, the model itself is broken (NaN
+    weights or BatchNorm statistics) and a clear error is raised.
+    """
     model.eval()
     base = unwrap(model)
     use_amp = amp and device.type == "cuda"
-    scores, targets = [], []
-    for x, y in loader:
-        x = x.to(device, non_blocking=True)
-        with torch.autocast(device_type=device.type, enabled=use_amp):
+
+    def run(x: torch.Tensor, amp_on: bool) -> torch.Tensor:
+        with torch.autocast(device_type=device.type, enabled=amp_on):
             s = base.to_score(model(x))
             if tta:
                 s = (s + base.to_score(model(torch.flip(x, dims=[3])))) / 2
-        scores.append(s.float().cpu())
+        return s.float()
+
+    scores, targets = [], []
+    n_fallback = 0
+    for x, y in loader:
+        x = x.to(device, non_blocking=True)
+        s = run(x, use_amp)
+        if use_amp and not torch.isfinite(s).all():
+            n_fallback += 1
+            s = run(x.float(), False)
+        scores.append(s.cpu())
         targets.append(y)
-    return torch.cat(scores).numpy(), torch.cat(targets).numpy()
+    scores_np = torch.cat(scores).numpy()
+    if n_fallback:
+        log.warning("fp16 overflow in %d eval batches; recomputed them in fp32.", n_fallback)
+    bad = ~np.isfinite(scores_np)
+    if bad.any():
+        raise RuntimeError(
+            f"Model produced NaN/inf for {bad.sum()} of {len(bad)} images even in fp32. "
+            f"Non-finite tensors: {nonfinite_state(base)[:5] or 'none'}. "
+            "Training diverged; try train.amp=false or a lower train.lr."
+        )
+    return scores_np, torch.cat(targets).numpy()
+
+
+def nonfinite_state(model: nn.Module) -> list[str]:
+    """Names of parameters/buffers (e.g. BatchNorm running stats) with NaN/inf."""
+    return [
+        name
+        for name, t in list(model.named_parameters()) + list(model.named_buffers())
+        if t.is_floating_point() and not torch.isfinite(t).all()
+    ]
 
 
 def _loss_fn(model: RetinaModel, cfg: dict):
@@ -161,26 +196,56 @@ def train(cfg: dict, resume: str | None = None) -> Path:
         frozen = epoch < tcfg["freeze_epochs"]
         _set_backbone_trainable(base, not frozen)
         model.train()
-        t0, running, seen = time.time(), 0.0, 0
+        if frozen:
+            # Frozen backbone: keep its BatchNorm statistics fixed as well.
+            base.backbone.eval()
+        t0, running, seen, skipped = time.time(), 0.0, 0, 0
+        data_time = compute_time = 0.0
+        t_data = time.perf_counter()
         for step, (x, y) in enumerate(train_loader):
             if step >= steps_per_epoch:
                 break
+            t_start = time.perf_counter()
+            data_time += t_start - t_data
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             with torch.autocast(device_type=device.type, enabled=use_amp):
                 out = model(x)
             loss = loss_fn(out, y)
             optimizer.zero_grad(set_to_none=True)
+            if not torch.isfinite(loss):
+                skipped += 1
+                if skipped > 20:
+                    raise RuntimeError(
+                        f"Loss was NaN/inf for {skipped} steps; training diverged. "
+                        f"Non-finite tensors: {nonfinite_state(base)[:5]}. Try train.amp=false or a lower train.lr."
+                    )
+                t_data = time.perf_counter()
+                continue
             scaler.scale(loss).backward()
             if tcfg["grad_clip"]:
                 scaler.unscale_(optimizer)
                 nn.utils.clip_grad_norm_(model.parameters(), tcfg["grad_clip"])
+            scale_before = scaler.get_scale()
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
-            running += loss.item() * len(x)
+            # GradScaler skips the optimizer step when it lowers the scale
+            # (inf gradients); skip the LR step too, so the schedule stays aligned.
+            if scaler.get_scale() >= scale_before:
+                scheduler.step()
+            running += loss.item() * len(x)  # .item() syncs, so timings below are real
             seen += len(x)
-            if step % 100 == 0:
-                log.info("epoch %d step %d/%d loss %.4f", epoch, step, steps_per_epoch, loss.item())
+            t_data = time.perf_counter()
+            compute_time += t_data - t_start
+            if step % 50 == 0:
+                n = step + 1
+                log.info(
+                    "epoch %d step %d/%d loss %.4f | %.2fs/step (data wait %.2fs, GPU %.2fs) | lr %.2e",
+                    epoch, step, steps_per_epoch, loss.item(),
+                    (data_time + compute_time) / n, data_time / n, compute_time / n,
+                    optimizer.param_groups[-1]["lr"],
+                )
+        if skipped:
+            log.warning("epoch %d: skipped %d steps with non-finite loss", epoch, skipped)
 
         scores, targets = predict(model, val_loader, device, tta=tcfg["tta"], amp=tcfg["amp"])
         val_qwk = qwk(targets, scores_to_grades(scores, DEFAULT_THRESHOLDS))
@@ -189,6 +254,9 @@ def train(cfg: dict, resume: str | None = None) -> Path:
         row = {
             "epoch": epoch,
             "train_loss": running / max(1, seen),
+            "skipped_steps": skipped,
+            "data_wait_s": round(data_time, 1),
+            "compute_s": round(compute_time, 1),
             "val_qwk": val_qwk,
             "val_qwk_tuned": val_qwk_tuned,
             "backbone_frozen": frozen,
