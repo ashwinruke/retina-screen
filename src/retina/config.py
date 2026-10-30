@@ -46,6 +46,7 @@ DEFAULTS: dict[str, Any] = {
         "label_smoothing": 0.05,  # classification head only
         "grad_clip": 1.0,
         "amp": True,
+        "channels_last": True,  # faster fp16 convs on GPU; ignored on CPU
         "num_workers": 4,
         "seed": 42,
         "init_from": None,  # checkpoint to start from (e.g. stage 1 best)

@@ -64,6 +64,8 @@ def predict(
     n_fallback = 0
     for x, y in loader:
         x = x.to(device, non_blocking=True)
+        if device.type == "cuda":
+            x = x.contiguous(memory_format=torch.channels_last)
         s = run(x, use_amp)
         if use_amp and not torch.isfinite(s).all():
             n_fallback += 1
@@ -119,6 +121,26 @@ def save_checkpoint(path: Path, model: nn.Module, cfg: dict, **extra) -> None:
     torch.save({"model": unwrap(model).state_dict(), "config": cfg, **extra}, path)
 
 
+def environment_info() -> str:
+    """One line describing torch, CUDA and the GPUs, for logs and bug reports."""
+    parts = [f"torch {torch.__version__}"]
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            p = torch.cuda.get_device_properties(i)
+            parts.append(f"cuda:{i} {p.name} (sm_{p.major}{p.minor}, {p.total_memory / 2**30:.0f} GB)")
+    else:
+        parts.append("NO GPU - running on CPU")
+    return " | ".join(parts)
+
+
+def _attach_log_file(path: Path) -> logging.Handler:
+    """Copy all log output to a file in the run folder (appends on resume)."""
+    handler = logging.FileHandler(path)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", "%H:%M:%S"))
+    logging.getLogger().addHandler(handler)
+    return handler
+
+
 def train(cfg: dict, resume: str | None = None) -> Path:
     """Train according to ``cfg``. Returns the path of the best checkpoint."""
     tcfg = cfg["train"]
@@ -128,6 +150,8 @@ def train(cfg: dict, resume: str | None = None) -> Path:
     out_dir = Path(cfg["experiment"]["out_dir"]) / cfg["experiment"]["name"]
     out_dir.mkdir(parents=True, exist_ok=True)
     save_config(cfg, out_dir / "config.yaml")
+    log_file = _attach_log_file(out_dir / "train.log")
+    log.info("Environment: %s", environment_info())
 
     # ---- data
     manifest = pd.read_csv(cfg["data"]["manifest"])
@@ -151,7 +175,11 @@ def train(cfg: dict, resume: str | None = None) -> Path:
     model = build_model(cfg["model"])
     if tcfg["init_from"] and not resume:
         load_weights(model, tcfg["init_from"])
+    channels_last = bool(tcfg.get("channels_last", True)) and device.type == "cuda"
     model.to(device)
+    if channels_last:
+        # Faster convolutions with fp16 on tensor-core GPUs (T4, V100, A100...).
+        model.to(memory_format=torch.channels_last)
 
     head_params = model.head_parameters()
     head_ids = {id(p) for p in head_params}
@@ -208,6 +236,8 @@ def train(cfg: dict, resume: str | None = None) -> Path:
             t_start = time.perf_counter()
             data_time += t_start - t_data
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            if channels_last:
+                x = x.contiguous(memory_format=torch.channels_last)
             with torch.autocast(device_type=device.type, enabled=use_amp):
                 out = model(x)
             loss = loss_fn(out, y)
@@ -254,6 +284,7 @@ def train(cfg: dict, resume: str | None = None) -> Path:
         row = {
             "epoch": epoch,
             "train_loss": running / max(1, seen),
+            "lr": optimizer.param_groups[-1]["lr"],
             "skipped_steps": skipped,
             "data_wait_s": round(data_time, 1),
             "compute_s": round(compute_time, 1),
@@ -284,6 +315,8 @@ def train(cfg: dict, resume: str | None = None) -> Path:
             scheduler=scheduler.state_dict(), scaler=scaler.state_dict(),
         )
     log.info("Best val QWK %.4f -> %s", best_qwk, out_dir / "best.pt")
+    logging.getLogger().removeHandler(log_file)
+    log_file.close()
     return out_dir / "best.pt"
 
 
