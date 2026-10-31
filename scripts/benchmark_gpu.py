@@ -58,6 +58,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", required=True)
     ap.add_argument("--steps", type=int, default=10)
+    ap.add_argument("--try-data-parallel", action="store_true",
+                    help="Also time nn.DataParallel over all GPUs (segfaults on Kaggle T4 x2 with torch 2.11)")
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
 
@@ -83,7 +85,7 @@ def main() -> None:
                 print(f"{'train' if train else 'infer':<10}{str(amp):<7}{str(cl):<11}  failed: {str(e).splitlines()[0]}")
                 if device.type == "cuda":
                     torch.cuda.empty_cache()
-    if device.type == "cuda" and torch.cuda.device_count() > 1:
+    if args.try_data_parallel and device.type == "cuda" and torch.cuda.device_count() > 1:
         print("\nDataParallel over", torch.cuda.device_count(), "GPUs (fp16, channels_last):")
         dp = torch.nn.DataParallel(model)
         for train in (True, False):
