@@ -50,7 +50,9 @@ DEFAULTS: dict[str, Any] = {
         "num_workers": 4,
         "seed": 42,
         "init_from": None,  # checkpoint to start from (e.g. stage 1 best)
-        "data_parallel": True,  # use all visible GPUs (Kaggle T4 x2)
+        # nn.DataParallel over all visible GPUs. Off by default: on Kaggle's
+        # T4 x2 it was far slower than one GPU and crashed with a segfault.
+        "data_parallel": False,
         "max_steps_per_epoch": None,  # for smoke tests
         "tta": True,  # flip TTA during validation
     },

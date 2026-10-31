@@ -1,4 +1,5 @@
 """Make `import retina` work when scripts are run without `pip install -e .`."""
+import faulthandler
 import logging
 import sys
 from pathlib import Path
@@ -13,3 +14,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
     stream=sys.stdout,
 )
+
+# On a hard crash (segmentation fault), print the Python stack of every thread
+# instead of dying silently, so we can see which line crashed.
+faulthandler.enable(all_threads=True)

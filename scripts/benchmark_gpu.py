@@ -41,6 +41,7 @@ def time_step(model, x, y, amp: bool, channels_last: bool, steps: int, train: bo
                 model(x)
 
     model.train(train)
+    print(f"  running {'train' if train else 'infer'} fp16={amp} channels_last={channels_last} ...", flush=True)
     for _ in range(3):  # warm-up (cuDNN autotuning, memory allocation)
         one()
     if device.type == "cuda":
@@ -82,6 +83,15 @@ def main() -> None:
                 print(f"{'train' if train else 'infer':<10}{str(amp):<7}{str(cl):<11}  failed: {str(e).splitlines()[0]}")
                 if device.type == "cuda":
                     torch.cuda.empty_cache()
+    if device.type == "cuda" and torch.cuda.device_count() > 1:
+        print("\nDataParallel over", torch.cuda.device_count(), "GPUs (fp16, channels_last):")
+        dp = torch.nn.DataParallel(model)
+        for train in (True, False):
+            try:
+                s = time_step(dp, x, y, True, True, args.steps, train)
+                print(f"{'train' if train else 'infer':<10}{'True':<7}{'True':<11}{s:>8.3f}{bs / s:>9.1f}")
+            except RuntimeError as e:
+                print(f"{'train' if train else 'infer'}  failed: {str(e).splitlines()[0]}")
     if device.type == "cuda":
         print(f"\nPeak GPU memory: {torch.cuda.max_memory_allocated() / 2**30:.1f} GB")
 
