@@ -6,9 +6,14 @@ from retina.manifests import COLUMNS
 def test_aptos_dedup_and_splits(manifests_dir):
     df = pd.read_csv(manifests_dir / "aptos.csv")
     assert list(df.columns[: len(COLUMNS)]) == COLUMNS
-    # 60 images + 1 conflicting duplicate of image 0 -> both copies dropped
+    # 60 images + a conflicting copy of image 0 (both dropped) + a same-label
+    # copy of image 1 (one kept). sample_submission.csv must be ignored.
     assert len(df) == 59
-    assert "dup0000000000" not in set(df["image_id"])
+    ids = set(df["image_id"])
+    assert "dup0000000000" not in ids
+    assert len(ids & {df["image_id"].iloc[0], "dup0000000001"}) <= 1
+    assert not any(i.startswith("test") for i in ids)
+    assert not df["image_path"].str.contains("test_images").any()
     assert set(df["split"]) == {"train", "val", "test"}
     assert df["image_id"].is_unique
 
@@ -49,3 +54,17 @@ def test_auto_flag_and_helpful_error(synthetic, tmp_path):
     with pytest.raises(AssertionError, match="Could not find a eyepacs label CSV"):
         run(ROOT / "scripts/prepare_data.py", "--eyepacs", "auto",
             "--search-root", synthetic / "aptos", "--out-dir", tmp_path)
+
+
+def test_fingerprint_matches_copies_not_different_eyes(synthetic):
+    import numpy as np
+
+    from retina.manifests import DUPLICATE_THRESHOLD, fingerprint
+
+    imgs = synthetic / "aptos" / "train_images"
+    train = pd.read_csv(synthetic / "aptos" / "train.csv")
+    a = fingerprint(imgs / f"{train.id_code[1]}.png")
+    copy = fingerprint(imgs / "dup0000000001.png")
+    assert float(a @ copy) > DUPLICATE_THRESHOLD
+    others = np.stack([fingerprint(imgs / f"{i}.png") for i in train.id_code[2:40]])
+    assert (others @ a).max() < DUPLICATE_THRESHOLD

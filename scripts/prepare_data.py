@@ -50,7 +50,9 @@ def main() -> None:
 
     jobs = []
     if args.aptos:
-        jobs.append(("aptos", lambda: manifests.build_aptos(args.aptos, dedup=not args.no_dedup, seed=args.seed)))
+        jobs.append(("aptos", lambda: manifests.build_aptos(
+            args.aptos, dedup=not args.no_dedup, seed=args.seed,
+            dedup_report=out / "aptos_duplicates.csv")))
     if args.eyepacs:
         jobs.append(("eyepacs", lambda: manifests.build_eyepacs(
             args.eyepacs, include_test_labels=not args.eyepacs_train_only, seed=args.seed)))

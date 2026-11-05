@@ -22,10 +22,15 @@ def fake_fundus(grade: int, rng: np.random.Generator, h: int = 300, w: int = 400
     cx, cy = w // 2 + int(rng.integers(-10, 10)), h // 2 + int(rng.integers(-5, 5))
     base = np.array([40, 80, 200]) * rng.uniform(0.7, 1.1)  # BGR orange-red
     cv2.circle(img, (cx, cy), r, tuple(int(c) for c in base), -1)
+    # Optic disc at a random spot, with vessels branching out of it.
+    da = rng.uniform(0, 2 * np.pi)
+    disc = (int(cx + r * 0.6 * np.cos(da)), int(cy + r * 0.6 * np.sin(da)))
+    thick = max(2, h // 120)
     for _ in range(6):  # vessels
         angle = rng.uniform(0, 2 * np.pi)
         end = (int(cx + r * 0.9 * np.cos(angle)), int(cy + r * 0.9 * np.sin(angle)))
-        cv2.line(img, (cx, cy), end, (20, 30, 120), 2)
+        cv2.line(img, disc, end, (20, 30, 120), thick)
+    cv2.circle(img, disc, max(4, r // 7), (150, 220, 250), -1)
     for _ in range(grade * 8):  # "lesions"
         a, d = rng.uniform(0, 2 * np.pi), rng.uniform(0, r * 0.8)
         p = (int(cx + d * np.cos(a)), int(cy + d * np.sin(a)))
@@ -41,15 +46,31 @@ def make_aptos(root: Path, n: int, rng) -> None:
     for i in range(n):
         grade = int(rng.integers(0, 5))
         image_id = f"{i:012x}"
-        cv2.imwrite(str(root / "train_images" / f"{image_id}.png"), fake_fundus(grade, rng))
+        cv2.imwrite(str(root / "train_images" / f"{image_id}.png"), fake_fundus(grade, rng, 600, 800))
         rows.append((image_id, grade))
-    # A duplicate with a conflicting label, like the real APTOS has.
-    src = root / "train_images" / f"{rows[0][0]}.png"
-    dup_id = "dup0000000000"
-    cv2.imwrite(str(root / "train_images" / f"{dup_id}.png"), cv2.imread(str(src)))
-    rows.append((dup_id, (rows[0][1] + 2) % 5))
+    # Duplicates like the real APTOS has: resized, re-encoded copies, one with
+    # a conflicting label (both copies should be dropped) and one with the
+    # same label (one copy should be kept).
+    def copy_of(src_id: str, dup_id: str) -> None:
+        img = cv2.imread(str(root / "train_images" / f"{src_id}.png"))
+        img = cv2.resize(img, (img.shape[1] * 3 // 4, img.shape[0] * 3 // 4))
+        _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        cv2.imwrite(str(root / "train_images" / f"{dup_id}.png"), cv2.imdecode(buf, cv2.IMREAD_COLOR))
+
+    copy_of(rows[0][0], "dup0000000000")
+    rows.append(("dup0000000000", (rows[0][1] + 2) % 5))
+    copy_of(rows[1][0], "dup0000000001")
+    rows.append(("dup0000000001", rows[1][1]))
     pd.DataFrame(rows, columns=["id_code", "diagnosis"]).to_csv(root / "train.csv", index=False)
-    pd.DataFrame({"id_code": ["unlabelled"]}).to_csv(root / "test.csv", index=False)
+
+    # Unlabelled competition test set, plus the submission template whose
+    # `diagnosis` column is all zeros. Neither must end up in the manifest.
+    (root / "test_images").mkdir(exist_ok=True)
+    test_ids = [f"test{i:08x}" for i in range(5)]
+    for t in test_ids:
+        cv2.imwrite(str(root / "test_images" / f"{t}.png"), fake_fundus(int(rng.integers(0, 5)), rng, 600, 800))
+    pd.DataFrame({"id_code": test_ids}).to_csv(root / "test.csv", index=False)
+    pd.DataFrame({"id_code": test_ids, "diagnosis": 0}).to_csv(root / "sample_submission.csv", index=False)
 
 
 def make_eyepacs(root: Path, n_patients: int, rng) -> None:
