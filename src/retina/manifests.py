@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit, train_test_split
 
-from .preprocess import crop_to_fundus, pad_to_square
+from .preprocess import crop_to_fundus, fundus_mask, pad_to_square
 
 log = logging.getLogger(__name__)
 
@@ -145,51 +145,89 @@ def _attach_paths(df: pd.DataFrame, index: dict[str, Path], name: str) -> pd.Dat
     return df
 
 
-DUPLICATE_THRESHOLD = 0.92
+DUPLICATE_THRESHOLD = 0.92  # fine-detail correlation
+LAYOUT_THRESHOLD = 0.97  # overall-appearance correlation; copies are ~0.99+
+
+
+def fingerprints(path: str | Path, size: int = 48) -> tuple[np.ndarray, np.ndarray]:
+    """(detail, layout) unit vectors for one image. See ``fingerprint`` for
+    detail; layout is a 16x16 thumbnail of overall brightness (optic disc
+    position, which eye, framing)."""
+    img = cv2.imread(str(path), cv2.IMREAD_REDUCED_COLOR_4)
+    if img is None:
+        raise FileNotFoundError(path)
+    img = pad_to_square(crop_to_fundus(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)))
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    layout = cv2.resize(gray, (16, 16), interpolation=cv2.INTER_AREA).astype(np.float32).flatten()
+    layout -= layout.mean()
+    layout /= np.linalg.norm(layout) + 1e-6
+    return _detail_vector(img, size), layout
 
 
 def fingerprint(path: str | Path, size: int = 48) -> np.ndarray:
     """Unit-length vector of an image's fine detail (vessels, lesions).
 
     The image is cropped to the retina and shrunk to size x size, then its
-    blurred version is subtracted so only fine structure is left. Two copies
+    local average is subtracted so only fine structure is left. Two copies
     of the same photo (resized, re-encoded) keep the same vessels and give a
-    correlation near 1; photos of different eyes don't. Comparing the whole
-    thumbnail instead would match any two retinas with similar framing.
+    correlation near 1; photos of different eyes don't.
+
+    The local average only uses retina pixels, and a band along the retina's
+    edge is ignored. Otherwise the straight edges of photos whose camera clips
+    the top and bottom of the retina count as "detail", and every photo from
+    that camera looks alike.
     """
-    img = cv2.imread(str(path), cv2.IMREAD_REDUCED_COLOR_4)
-    if img is None:
-        raise FileNotFoundError(path)
-    img = pad_to_square(crop_to_fundus(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)))
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    s = cv2.resize(gray, (size, size), interpolation=cv2.INTER_AREA).astype(np.float32)
-    s -= cv2.GaussianBlur(s, (0, 0), size / 16)
-    yy, xx = np.mgrid[:size, :size]
-    s[np.hypot(yy - size / 2, xx - size / 2) > size * 0.42] = 0  # ignore the rim
-    v = s.flatten()
-    v -= v.mean()
+    return fingerprints(path, size)[0]
+
+
+def _detail_vector(img: np.ndarray, size: int) -> np.ndarray:
+    img = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY).astype(np.float32)
+
+    mask = fundus_mask(img).astype(np.float32)
+    sigma = size / 16
+    local = cv2.GaussianBlur(gray * mask, (0, 0), sigma) / np.maximum(
+        cv2.GaussianBlur(mask, (0, 0), sigma), 1e-3
+    )
+    detail = gray - local
+    band = max(2, size // 12)
+    inner = cv2.erode(
+        mask.astype(np.uint8),
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * band + 1, 2 * band + 1)),
+        borderType=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    ).flatten() > 0
+    v = detail.flatten()
+    if inner.any():
+        v = v - v[inner].mean()
+    v[~inner] = 0
     return v / (np.linalg.norm(v) + 1e-6)
 
 
-def duplicate_groups(paths: Sequence[str], threshold: float = DUPLICATE_THRESHOLD) -> np.ndarray:
-    """Group id per image; images whose fingerprints correlate above the
-    threshold (directly or through a chain) share a group."""
-    vecs = np.stack([fingerprint(p) for p in paths])
-    parent = list(range(len(paths)))
+def duplicate_groups(
+    paths: Sequence[str],
+    threshold: float = DUPLICATE_THRESHOLD,
+    layout_threshold: float = LAYOUT_THRESHOLD,
+) -> np.ndarray:
+    """Group id per image.
 
-    def root(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    for start in range(0, len(paths), 1024):  # chunked to bound memory
-        sims = vecs[start : start + 1024] @ vecs.T
-        for a, b in zip(*np.nonzero(sims > threshold)):
-            a += start
-            if a < b:
-                parent[root(a)] = root(b)
-    return np.array([root(i) for i in range(len(paths))])
+    Two images match only if both their fine detail and their overall layout
+    correlate above the thresholds. No chaining: an image joins a group only
+    if it matches the group's first image directly, so A~B and B~C never pull
+    an unrelated A and C together.
+    """
+    pairs = [fingerprints(p) for p in paths]
+    detail = np.stack([d for d, _ in pairs])
+    layout = np.stack([l for _, l in pairs])
+    group = np.full(len(paths), -1)
+    for i in range(len(paths)):
+        if group[i] >= 0:
+            continue
+        group[i] = i
+        match = (detail @ detail[i] > threshold) & (layout @ layout[i] > layout_threshold)
+        members = np.flatnonzero(match & (group < 0))
+        group[members] = i
+    return group
 
 
 def deduplicate(
@@ -217,6 +255,13 @@ def deduplicate(
         else:
             keep.append(group.index[0])
             n_dupe += len(group) - 1
+    sizes = df["_group"].value_counts()
+    if (sizes > 4).any():
+        log.warning(
+            "Dedup: %d groups have more than 4 images (largest %d). Check them in the "
+            "duplicates report; large groups usually mean different eyes matched.",
+            int((sizes > 4).sum()), int(sizes.max()),
+        )
     log.info(
         "Dedup: %d duplicate groups; removed %d extra copies and %d images with "
         "conflicting labels; kept %d of %d.",

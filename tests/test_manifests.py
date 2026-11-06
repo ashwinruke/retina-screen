@@ -68,3 +68,38 @@ def test_fingerprint_matches_copies_not_different_eyes(synthetic):
     assert float(a @ copy) > DUPLICATE_THRESHOLD
     others = np.stack([fingerprint(imgs / f"{i}.png") for i in train.id_code[2:40]])
     assert (others @ a).max() < DUPLICATE_THRESHOLD
+
+
+def test_clipped_camera_eyes_are_not_grouped(tmp_path):
+    """Different eyes from a camera that clips the retina's top and bottom
+    share straight edges; they must not be grouped. Copies still must be."""
+    import sys
+    from collections import Counter
+
+    import cv2
+    import numpy as np
+
+    from conftest import ROOT
+    from retina.manifests import duplicate_groups
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from make_synthetic import fake_fundus
+
+    rng = np.random.default_rng(3)
+    paths = []
+    for i in range(30):
+        p = tmp_path / f"eye{i}.png"
+        cv2.imwrite(str(p), fake_fundus(int(rng.integers(0, 5)), rng, 900, 900)[150:750])
+        paths.append(str(p))
+    for i in range(5):  # resized, re-encoded copies of the first five
+        img = cv2.resize(cv2.imread(paths[i]), (675, 450))
+        _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        p = tmp_path / f"copy{i}.png"
+        cv2.imwrite(str(p), cv2.imdecode(buf, cv2.IMREAD_COLOR))
+        paths.append(str(p))
+
+    groups = duplicate_groups(paths)
+    sizes = Counter(groups)
+    assert sorted(sizes.values(), reverse=True)[:6] == [2, 2, 2, 2, 2, 1]
+    for i in range(5):
+        assert groups[i] == groups[30 + i]
