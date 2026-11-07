@@ -11,22 +11,68 @@ beyond the dataset it was trained on:
 
 > Research project, not a medical device.
 
+**Status:** MVP done (APTOS baseline, results below). Next: live demo, IDRiD
+external test, then EyePACS pretraining.
+
 <!-- Replace with your Space link once deployed -->
 **Live demo:** _coming soon_
 
 ## Results
 
-_Fill in after training. Thresholds fit on APTOS val, then frozen._
+### MVP baseline: ImageNet → APTOS (no EyePACS yet)
+
+EfficientNet-B3 at 512 px, 15 epochs on one Kaggle T4 (~17 min). Evaluated on a
+held-out 15% of APTOS (523 images) that was never used for training, model
+selection or threshold tuning.
+
+| Metric | APTOS test |
+|---|---|
+| Quadratic weighted kappa | **0.917** (0.879 with default cut points) |
+| Accuracy (5 grades) | 0.816 |
+| Referable DR (grade ≥ 2): ROC-AUC | **0.986** |
+| Referable DR: sensitivity / specificity | 0.970 / 0.897 |
+
+![Training curves](docs/figures/mvp_training.png)
+
+| | |
+|---|---|
+| ![Confusion matrix](docs/figures/mvp_confusion.png) | ![Referable DR ROC](docs/figures/mvp_roc.png) |
+
+This test split comes from the APTOS training set, so these numbers are not
+comparable to the APTOS Kaggle leaderboard (a different, hidden test set).
+
+### Full comparison
+
+_Filled in as each step lands. Cut points fit on APTOS val, then frozen._
 
 | Run | APTOS test QWK | IDRiD QWK | IDRiD referable AUC | IDRiD sens / spec |
 |---|---|---|---|---|
-| A0 · ImageNet → APTOS | | | | |
+| A0 · ImageNet → APTOS | 0.917 | | | |
 | **A1 · EyePACS → APTOS (main)** | | | | |
 | A2 · A1 without Ben Graham | | | | |
 | A3 · A1 with classification head | | | | |
 | A4 · A1 + IDRiD fine-tune (IDRiD test only) | — | | | |
 
 QWK = quadratic weighted kappa. Referable DR = grade ≥ 2.
+
+## Data cleaning
+
+APTOS contains the same photo several times, sometimes with different grades.
+Copies that land on both sides of a train/test split inflate scores, and
+conflicting labels are noise. Every image gets two fingerprints: its fine
+detail (vessels, lesions) and its overall layout (optic disc position, which
+eye). Two images count as copies only when both match.
+
+| | Images |
+|---|---|
+| APTOS labelled images | 3,662 |
+| Duplicate groups found | 131 |
+| Extra copies removed (same grade, one kept) | 97 |
+| Removed: copies with conflicting grades | 79 |
+| **Used** | **3,486** |
+
+Split 70 / 15 / 15, stratified by grade. Every flagged group is listed in
+`data/manifests/aptos_duplicates.csv` for review.
 
 ## How it works
 
@@ -77,20 +123,25 @@ Any config value can be overridden on the command line, e.g.
 ### Demo
 
 ```bash
-MODEL_PATH=outputs/model.pt python app/app.py               # local
-bash scripts/build_space.sh outputs/model.pt space/          # folder to push to a HF Space
+MODEL_PATH=outputs/model.pt python app/app.py      # run locally
+HF_TOKEN=... python scripts/deploy_space.py --model outputs/model.pt --space <user>/retina-dr-screening
 ```
+
+`deploy_space.py` creates (or updates) the Space and uploads the app, the
+`retina` package and the model in one step.
 
 ## Repo layout
 
 ```
 configs/      one YAML per experiment (stage 1, stage 2, baseline, IDRiD adaptation, smoke test)
 src/retina/   preprocess · manifests · data · model · engine (train/predict) · metrics · gradcam
-scripts/      prepare_data · cache_images · train · evaluate · make_synthetic · build_space.sh
+scripts/      prepare_data · cache_images · train · evaluate · plot_results · deploy_space
+              benchmark_gpu · make_synthetic · build_space.sh
 app/          Gradio app for Hugging Face Spaces
 notebooks/    Kaggle notebook running the full pipeline
 tests/        unit tests + end-to-end test on synthetic data
 docs/PLAN.md  project plan, design decisions, milestones
+docs/figures/ result figures used in this README
 ```
 
 ## Data

@@ -4,9 +4,9 @@ emoji: 👁️
 colorFrom: indigo
 colorTo: red
 sdk: gradio
+sdk_version: 6.30.0
 app_file: app.py
 pinned: false
-license: mit
 ---
 
 # Retinal DR Screening
