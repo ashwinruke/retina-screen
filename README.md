@@ -122,22 +122,32 @@ Any config value can be overridden on the command line, e.g.
 
 ### Demo
 
+The live demo is a static page (`web/`) that runs the model in the visitor's
+browser with ONNX Runtime Web, so photos never leave their device and it
+needs no server. Everything after crop-and-resize (colour normalisation, the
+network, flip TTA and Grad-CAM) is inside the exported ONNX graph, and the
+export checks itself against the PyTorch pipeline.
+
 ```bash
-MODEL_PATH=outputs/model.pt python app/app.py      # run locally
-HF_TOKEN=... python scripts/deploy_space.py --model outputs/model.pt --space <user>/retina-dr-screening
+pip install onnx onnxscript onnxruntime
+python scripts/export_onnx.py --model outputs/model.pt --out-dir web \
+    --check-images cache/aptos.csv --report outputs/eval/mvp_aptos_test.json
+python -m http.server -d web 8000                  # preview at http://localhost:8000
+HF_TOKEN=... python scripts/deploy_space.py --space <user>/retina-dr-screening
 ```
 
-`deploy_space.py` creates (or updates) the Space and uploads the app, the
-`retina` package and the model in one step.
+`app/app.py` is the same demo as a server-side Gradio app
+(`MODEL_PATH=outputs/model.pt python app/app.py`).
 
 ## Repo layout
 
 ```
 configs/      one YAML per experiment (stage 1, stage 2, baseline, IDRiD adaptation, smoke test)
 src/retina/   preprocess · manifests · data · model · engine (train/predict) · metrics · gradcam
-scripts/      prepare_data · cache_images · train · evaluate · plot_results · deploy_space
-              benchmark_gpu · make_synthetic · build_space.sh
-app/          Gradio app for Hugging Face Spaces
+scripts/      prepare_data · cache_images · train · evaluate · plot_results · export_onnx
+              deploy_space · benchmark_gpu · make_synthetic · build_space.sh
+web/          in-browser demo (static page + ONNX model)
+app/          the same demo as a Gradio app
 notebooks/    Kaggle notebook running the full pipeline
 tests/        unit tests + end-to-end test on synthetic data
 docs/PLAN.md  project plan, design decisions, milestones

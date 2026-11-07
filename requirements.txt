@@ -10,5 +10,8 @@ pyyaml
 # demo
 gradio>=4.0
 huggingface_hub
+onnx
+onnxscript
+onnxruntime
 # tests
 pytest

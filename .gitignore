@@ -7,3 +7,5 @@ space/
 *.pt
 *.pth
 .ipynb_checkpoints/
+web/model.onnx
+web/model.json
