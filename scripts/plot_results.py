@@ -6,7 +6,8 @@
         --predictions outputs/eval/mvp_aptos_test_predictions.csv \
         --out-dir docs/figures --prefix mvp
 
-Writes <prefix>_training.png, <prefix>_confusion.png and <prefix>_roc.png.
+Writes <prefix>_training.png (if --history is given), <prefix>_confusion.png
+and <prefix>_roc.png.
 """
 import argparse
 import json
@@ -131,7 +132,7 @@ def plot_roc(preds: pd.DataFrame, report: dict, path: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--history", required=True)
+    ap.add_argument("--history", help="history.csv from training; omit for an external test set")
     ap.add_argument("--report", required=True, help="JSON written by evaluate.py")
     ap.add_argument("--predictions", required=True, help="*_predictions.csv written by evaluate.py")
     ap.add_argument("--out-dir", default="docs/figures")
@@ -141,7 +142,8 @@ def main() -> None:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     report = json.loads(Path(args.report).read_text())["tuned_thresholds"]
-    plot_training(pd.read_csv(args.history), out / f"{args.prefix}_training.png")
+    if args.history:
+        plot_training(pd.read_csv(args.history), out / f"{args.prefix}_training.png")
     plot_confusion(report, out / f"{args.prefix}_confusion.png")
     plot_roc(pd.read_csv(args.predictions), report, out / f"{args.prefix}_roc.png")
     print("Figures written to", out)

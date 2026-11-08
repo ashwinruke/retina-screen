@@ -91,12 +91,18 @@ def make_idrid(root: Path, n_train: int, n_test: int, rng) -> None:
         img_dir = base / "1. Original Images" / f"{letter}. {split} Set"
         img_dir.mkdir(parents=True, exist_ok=True)
         rows = []
-        offset = 0 if split == "Training" else n_train
+        # Like the real IDRiD, numbering restarts at 001 in the test set, so
+        # the same file names exist in both folders.
         for i in range(n):
             grade = int(rng.integers(0, 5))
-            name = f"IDRiD_{offset + i + 1:03d}"
+            name = f"IDRiD_{i + 1:03d}"
             cv2.imwrite(str(img_dir / f"{name}.jpg"), fake_fundus(grade, rng))
             rows.append((name, grade, int(rng.integers(0, 3)), None))
+        # The Localization part reuses the same names; it must be ignored.
+        loc_dir = root / "C. Localization" / "1. Original Images" / f"{letter}. {split} Set"
+        loc_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(min(n, 3)):
+            cv2.imwrite(str(loc_dir / f"IDRiD_{i + 1:03d}.jpg"), fake_fundus(0, rng))
         gt = base / "2. Groundtruths"
         gt.mkdir(parents=True, exist_ok=True)
         # Real file has a trailing space in the DME column and blank columns.

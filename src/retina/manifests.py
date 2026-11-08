@@ -367,32 +367,72 @@ def build_eyepacs(
     return _finish(df, "eyepacs")
 
 
+def _split_of(path: Path) -> str:
+    """'test' if any folder or file name in the path mentions testing, else 'train'."""
+    return "test" if any("test" in part.lower() for part in path.parts) else "train"
+
+
+def _common_depth(a: Path, b: Path) -> int:
+    n = 0
+    for x, y in zip(a.parts, b.parts):
+        if x != y:
+            break
+        n += 1
+    return n
+
+
 def build_idrid(roots: str | Path | Sequence[str | Path]) -> pd.DataFrame:
     """IDRiD disease-grading subset.
 
     Label CSVs have columns "Image name", "Retinopathy grade" and
-    "Risk of macular edema". The official train/test split is taken from the
-    CSV file name.
+    "Risk of macular edema". The official train/test split comes from the
+    CSV's path (e.g. "...Testing Labels.csv").
+
+    Image names repeat across splits: the official test set restarts at
+    IDRiD_001, so "IDRiD_001.jpg" exists in both the training and the testing
+    folder (and again in the Localization part, if present). Each label is
+    matched to the image whose path has the same split and sits closest to
+    the CSV; image_id is prefixed with the split to keep it unique.
     """
     roots = _as_paths(roots)
     csvs = find_label_csvs(roots, {"Image name", "Retinopathy grade"})
     if not csvs:
         raise RuntimeError("IDRiD: no CSV with columns 'Image name', 'Retinopathy grade' found.")
-    frames = []
-    for p in csvs:
-        df = _clean_columns(pd.read_csv(p)).dropna(subset=["Image name"])
-        name = p.name.lower()
-        df["split"] = "test" if "test" in name else "train"
-        frames.append(df)
-    df = pd.concat(frames, ignore_index=True)
-    rename = {"Image name": "image_id", "Retinopathy grade": "grade"}
-    if "Risk of macular edema" in df.columns:
-        rename["Risk of macular edema"] = "dme_risk"
-    df = df.rename(columns=rename)
-    keep = ["image_id", "grade", "split"] + (["dme_risk"] if "dme_risk" in df.columns else [])
-    df = df[keep]
-    df["image_id"] = df["image_id"].astype(str).str.strip()
-    df = _attach_paths(df, index_images(roots), "IDRiD")
+    log.info("IDRiD label files: %s", [str(p) for p in csvs])
+
+    images: dict[str, list[Path]] = {}
+    for root in roots:
+        for p in root.rglob("*"):
+            if p.suffix.lower() in IMAGE_EXTS and p.is_file():
+                images.setdefault(p.stem, []).append(p)
+
+    rows = []
+    unmatched = 0
+    for csv_path in csvs:
+        root = next(r for r in roots if csv_path.is_relative_to(r))
+        split = _split_of(csv_path.relative_to(root))
+        df = _clean_columns(pd.read_csv(csv_path)).dropna(subset=["Image name"])
+        dme_col = next((c for c in df.columns if c.lower().startswith("risk of macular edema")), None)
+        for _, r in df.iterrows():
+            name = str(r["Image name"]).strip()
+            candidates = [p for p in images.get(name, []) if _split_of(p.relative_to(root)) == split]
+            if not candidates:
+                unmatched += 1
+                continue
+            best = max(candidates, key=lambda p: _common_depth(p, csv_path))
+            row = {"image_id": f"{split}_{name}", "image_name": name, "grade": r["Retinopathy grade"],
+                   "split": split, "image_path": str(best)}
+            if dme_col:
+                row["dme_risk"] = r[dme_col]
+            rows.append(row)
+    if unmatched:
+        log.warning("IDRiD: %d labelled images not found in a matching train/test folder; dropped.", unmatched)
+    if not rows:
+        raise RuntimeError("IDRiD: no labelled images found. Check the dataset path.")
+    df = pd.DataFrame(rows)
+    dupes = df["image_path"].duplicated()
+    if dupes.any():
+        raise RuntimeError(f"IDRiD: {dupes.sum()} labels point at the same image file; check the folders.")
     df["patient_id"] = df["image_id"]
     return _finish(df, "idrid")
 

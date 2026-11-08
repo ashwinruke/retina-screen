@@ -31,6 +31,12 @@ def test_idrid_official_split(manifests_dir):
     assert df["split"].value_counts().to_dict() == {"train": 20, "test": 10}
     assert "dme_risk" in df.columns
     assert df["grade"].between(0, 4).all()
+    # Test names repeat training names (IDRiD_001...); each must map to its own folder.
+    assert df["image_id"].is_unique and df["image_path"].is_unique
+    test = df[df.split == "test"]
+    assert test["image_path"].str.contains("Testing Set").all()
+    assert df[df.split == "train"]["image_path"].str.contains("Training Set").all()
+    assert df["image_path"].str.contains("B. Disease Grading").all()  # not C. Localization
 
 
 def test_locate_dataset(synthetic):
@@ -39,7 +45,7 @@ def test_locate_dataset(synthetic):
     assert locate_dataset("aptos", synthetic) == synthetic / "aptos"
     assert locate_dataset("eyepacs", synthetic) == synthetic / "eyepacs"
     # IDRiD labels live in "2. Groundtruths"; images in a sibling folder.
-    assert locate_dataset("idrid", synthetic) == synthetic / "idrid" / "B. Disease Grading"
+    assert locate_dataset("idrid", synthetic / "idrid") == synthetic / "idrid" / "B. Disease Grading"
 
 
 def test_auto_flag_and_helpful_error(synthetic, tmp_path):
