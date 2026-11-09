@@ -15,7 +15,7 @@ beyond the dataset it was trained on:
 external test, then EyePACS pretraining.
 
 <!-- Replace with your Space link once deployed -->
-**Live demo:** _coming soon_
+**Live demo:** [Live Link](https://huggingface.co/spaces/ashwinruke/retina-dr-screening)
 
 ## Results
 
