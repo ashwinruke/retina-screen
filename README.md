@@ -11,49 +11,81 @@ beyond the dataset it was trained on:
 
 > Research project, not a medical device.
 
-**Status:** MVP done (APTOS baseline, results below). Next: live demo, IDRiD
-external test, then EyePACS pretraining.
+**Status:** APTOS baseline, external test on IDRiD and live demo done (results
+below). Next: EyePACS pretraining.
 
-<!-- Replace with your Space link once deployed -->
-**Live demo:** [Live Link](https://huggingface.co/spaces/ashwinruke/retina-dr-screening)
+**Live demo:** [huggingface.co/spaces/ashwinruke/retina-dr-screening](https://huggingface.co/spaces/ashwinruke/retina-dr-screening)
+runs the model in your browser, so photos are never uploaded.
 
 ## Results
 
-### MVP baseline: ImageNet → APTOS (no EyePACS yet)
+All numbers below come from one model: EfficientNet-B3 at 512 px, ImageNet
+weights, trained 15 epochs on APTOS on one Kaggle T4 (~18 min). Cut points
+between grades were fit on APTOS validation data and then frozen.
 
-EfficientNet-B3 at 512 px, 15 epochs on one Kaggle T4 (~17 min). Evaluated on a
-held-out 15% of APTOS (523 images) that was never used for training, model
-selection or threshold tuning.
+| | APTOS test | IDRiD, all images | IDRiD official test |
+|---|---|---|---|
+| Images | 523 | 516 | 103 |
+| Source | same as training | **new clinic and camera** | subset of the 516 |
+| Quadratic weighted kappa | **0.920** | **0.787** | 0.682 |
+| Accuracy (5 grades) | 0.820 | 0.570 | 0.495 |
+| Referable DR: ROC-AUC | **0.985** | **0.960** | 0.904 |
+| Referable DR: sensitivity / specificity | 0.951 / 0.903 | 0.830 / 0.964 | 0.813 / 0.872 |
 
-| Metric | APTOS test |
-|---|---|
-| Quadratic weighted kappa | **0.917** (0.879 with default cut points) |
-| Accuracy (5 grades) | 0.816 |
-| Referable DR (grade ≥ 2): ROC-AUC | **0.986** |
-| Referable DR: sensitivity / specificity | 0.970 / 0.897 |
+Referable DR = grade ≥ 2 (moderate or worse), the threshold for referral to an
+eye specialist. The APTOS test split is 15% of the APTOS training set held out
+before training, so it isn't comparable to the APTOS Kaggle leaderboard.
+
+### Training and APTOS test
 
 ![Training curves](docs/figures/mvp_training.png)
 
 | | |
 |---|---|
-| ![Confusion matrix](docs/figures/mvp_confusion.png) | ![Referable DR ROC](docs/figures/mvp_roc.png) |
+| ![APTOS confusion matrix](docs/figures/mvp_confusion.png) | ![APTOS referable DR ROC](docs/figures/mvp_roc.png) |
 
-This test split comes from the APTOS training set, so these numbers are not
-comparable to the APTOS Kaggle leaderboard (a different, hidden test set).
+### External validation on IDRiD
+
+IDRiD was never used for training, model selection or tuning.
+
+| | |
+|---|---|
+| ![IDRiD confusion matrix](docs/figures/idrid_confusion.png) | ![IDRiD referable DR ROC](docs/figures/idrid_roc.png) |
+
+What it shows:
+
+- **Screening transfers; exact grading drops.** Referable-DR AUC only falls from
+  0.985 to 0.960 on a new clinic and camera, but QWK falls from 0.920 to 0.787.
+  The model still tells "refer" from "don't refer" well; it's less sure of the
+  exact grade.
+- **Severe disease is under-graded.** 58 of 93 severe (grade 3) eyes are
+  called moderate, so only 9% are graded correctly. They are still flagged as
+  referable, but without the urgency they need. Severe is rare in APTOS (5% of
+  images) and common in IDRiD (18%).
+- **Tuned cut points don't transfer.** The default cut points (0.5 / 1.5 / 2.5 / 3.5)
+  score better on IDRiD than the tuned ones (QWK 0.797 vs 0.787), and severe
+  recall rises from 9% to 46%. Tuning fit a severe band only 0.19 wide
+  (2.79–2.97) to the 25 severe eyes in APTOS validation; with so few examples
+  the fit is unstable, and it fails under a change of population.
+- **The 103-image official test set is small** (5 mild, 13 proliferative eyes),
+  so its numbers swing by several points with a handful of predictions. The
+  516-image figure is the headline.
 
 ### Full comparison
 
-_Filled in as each step lands. Cut points fit on APTOS val, then frozen._
+_Filled in as each step lands._
 
 | Run | APTOS test QWK | IDRiD QWK | IDRiD referable AUC | IDRiD sens / spec |
 |---|---|---|---|---|
-| A0 · ImageNet → APTOS | 0.917 | | | |
+| A0 · ImageNet → APTOS | 0.920 | 0.787 | 0.960 | 0.830 / 0.964 |
 | **A1 · EyePACS → APTOS (main)** | | | | |
 | A2 · A1 without Ben Graham | | | | |
 | A3 · A1 with classification head | | | | |
 | A4 · A1 + IDRiD fine-tune (IDRiD test only) | — | | | |
 
-QWK = quadratic weighted kappa. Referable DR = grade ≥ 2.
+QWK = quadratic weighted kappa. IDRiD columns use all 516 images, except A4,
+which trains on IDRiD's 413 training images and reports on its 103 test images
+(A0 on those 103: QWK 0.682).
 
 ## Data cleaning
 
@@ -112,6 +144,7 @@ python scripts/prepare_data.py --aptos ... --eyepacs ... --idrid ... --out-dir d
 python scripts/cache_images.py --manifest data/manifests/eyepacs.csv --out-dir cache --config configs/pretrain_eyepacs.yaml
 python scripts/train.py --config configs/pretrain_eyepacs.yaml        # stage 1 (resumable: --resume .../last.pt)
 python scripts/train.py --config configs/finetune_aptos.yaml          # stage 2
+python scripts/artifacts.py push --tag <name> --run <run folders>     # save results (Kaggle wipes outputs)
 python scripts/evaluate.py --checkpoint outputs/finetune_aptos/best.pt --manifest cache/aptos.csv --splits test \
     --fit-manifest cache/aptos.csv --fit-splits val --export outputs/model.pt
 python scripts/evaluate.py --checkpoint outputs/model.pt --manifest cache/idrid.csv --splits all --name idrid
