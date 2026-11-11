@@ -24,7 +24,9 @@ import torch
 
 from retina.data import make_loader, select
 from retina.engine import load_for_inference, predict
-from retina.metrics import DEFAULT_THRESHOLDS, full_report, optimize_thresholds, scores_to_grades
+from retina.metrics import (
+    DEFAULT_THRESHOLDS, MIN_BAND_WIDTH, full_report, optimize_thresholds, scores_to_grades,
+)
 from retina.preprocess import background_value
 
 log = logging.getLogger("evaluate")
@@ -50,6 +52,8 @@ def main() -> None:
     ap.add_argument("--datasets", nargs="*", help="Filter on the dataset column")
     ap.add_argument("--fit-manifest", help="Refit thresholds on this manifest (validation data only!)")
     ap.add_argument("--fit-splits", nargs="+", default=["val"])
+    ap.add_argument("--min-band-width", type=float, default=MIN_BAND_WIDTH,
+                    help="Smallest allowed width of the grade 1-3 bands when refitting cut points")
     ap.add_argument("--no-tta", dest="tta", action="store_false")
     ap.add_argument("--name", default="eval")
     ap.add_argument("--out-dir", default="outputs/eval")
@@ -65,7 +69,7 @@ def main() -> None:
     if args.fit_manifest:
         fit_df = select(pd.read_csv(args.fit_manifest), args.fit_splits, args.datasets)
         fit_scores, fit_y = _scores(model, cfg, fit_df, args, device)
-        thresholds = optimize_thresholds(fit_scores, fit_y)
+        thresholds = optimize_thresholds(fit_scores, fit_y, min_gap=args.min_band_width)
         log.info("Thresholds refit on %d images: %s", len(fit_df), [round(t, 3) for t in thresholds])
 
     df = select(pd.read_csv(args.manifest), args.splits, args.datasets)
@@ -78,6 +82,8 @@ def main() -> None:
         "manifest": str(args.manifest),
         "splits": args.splits,
         "tta": args.tta,
+        "cut_points_refit": bool(args.fit_manifest),
+        "min_band_width": args.min_band_width if args.fit_manifest else None,
         "tuned_thresholds": full_report(scores, y, thresholds),
         "default_thresholds": full_report(scores, y, DEFAULT_THRESHOLDS),
     }

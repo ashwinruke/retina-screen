@@ -44,3 +44,15 @@ def test_optimize_thresholds_ignores_nan_and_inf():
     scores[[3, 10]] = [np.nan, np.inf]
     t = optimize_thresholds(scores, y)
     assert t == sorted(t) and all(np.isfinite(t))
+
+
+def test_optimize_thresholds_keeps_bands_wide():
+    """Few severe examples must not squeeze the severe band to a sliver."""
+    rng = np.random.default_rng(2)
+    y = np.repeat([0, 1, 2, 3, 4], [300, 40, 120, 6, 30])
+    scores = y + rng.normal(0, 0.35, len(y))
+    scores[y == 3] = 2.9 + rng.normal(0, 0.05, 6)  # severe eyes bunched up
+    t = optimize_thresholds(scores, y, min_gap=0.5)
+    assert all(b - a >= 0.5 - 1e-9 for a, b in zip(t, t[1:]))
+    loose = optimize_thresholds(scores, y, min_gap=0.0)
+    assert min(b - a for a, b in zip(loose, loose[1:])) < 0.5  # unconstrained does squeeze

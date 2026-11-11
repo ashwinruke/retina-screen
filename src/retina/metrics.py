@@ -8,6 +8,10 @@ from sklearn.metrics import cohen_kappa_score, confusion_matrix, roc_auc_score
 
 NUM_GRADES = 5
 DEFAULT_THRESHOLDS = [0.5, 1.5, 2.5, 3.5]
+# Smallest allowed width of the mild, moderate and severe bands when tuning
+# cut points. Without it, tuning on a validation set with few severe eyes
+# squeezed the severe band to 0.19 wide, which hurt badly on IDRiD.
+MIN_BAND_WIDTH = 0.5
 REFERABLE_GRADE = 2  # grade >= 2 (moderate NPDR or worse) means refer
 
 GRADE_NAMES = [
@@ -39,12 +43,17 @@ def optimize_thresholds(
     init: Sequence[float] = DEFAULT_THRESHOLDS,
     passes: int = 4,
     steps: int = 41,
+    min_gap: float = MIN_BAND_WIDTH,
 ) -> list[float]:
     """Tune the four cut points to maximise QWK by coordinate search.
 
     Each threshold is searched on a grid between its neighbours, one at a
-    time, for a few passes. Fit this on validation data only.
+    time, for a few passes, keeping every inner band (grades 1-3) at least
+    ``min_gap`` wide. Fit this on validation data only.
     """
+    init = list(map(float, init))
+    if any(b - a < min_gap - 1e-9 for a, b in zip(init, init[1:])):
+        raise ValueError(f"Initial cut points {init} violate the minimum band width {min_gap}.")
     scores = np.asarray(scores, dtype=float)
     y_true = np.asarray(y_true, dtype=int)
     finite = np.isfinite(scores)
@@ -56,8 +65,9 @@ def optimize_thresholds(
     for _ in range(passes):
         improved = False
         for i in range(len(t)):
-            lo = t[i - 1] + 1e-3 if i > 0 else min(scores.min(), t[i]) - 0.5
-            hi = t[i + 1] - 1e-3 if i < len(t) - 1 else max(scores.max(), t[i]) + 0.5
+            gap = max(min_gap, 1e-3)
+            lo = t[i - 1] + gap if i > 0 else min(scores.min(), t[i]) - 0.5
+            hi = t[i + 1] - gap if i < len(t) - 1 else max(scores.max(), t[i]) + 0.5
             for cand in np.linspace(lo, hi, steps):
                 trial = t.copy()
                 trial[i] = float(cand)
