@@ -1,5 +1,7 @@
-# Stage 1: pretrain on EyePACS 2015 (large, noisy labels).
-# ~12 epochs at 512 px on a Kaggle T4 needs 2-3 sessions; continue with
+# Stage 1: pretrain on EyePACS 2015 (88k images, noisy labels).
+# ~84k training images at 0.34 s per batch of 16 is ~30 min per epoch on a
+# Kaggle T4, so 8 epochs is ~4.5 h including validation: one "Save & Run All"
+# session (12 h limit). If a session is cut short, continue with
 #   python scripts/train.py --config configs/pretrain_eyepacs.yaml --resume outputs/pretrain_eyepacs/last.pt
 experiment:
   name: pretrain_eyepacs
@@ -17,7 +19,7 @@ model:
   pretrained: true   # ImageNet
 train:
   image_size: 512
-  epochs: 12
+  epochs: 8
   batch_size: 16
   lr: 1.0e-3
   backbone_lr_mult: 0.3

@@ -109,3 +109,31 @@ def test_clipped_camera_eyes_are_not_grouped(tmp_path):
     assert sorted(sizes.values(), reverse=True)[:6] == [2, 2, 2, 2, 2, 1]
     for i in range(5):
         assert groups[i] == groups[30 + i]
+
+
+def test_eyepacs_grade_folder_layout(tmp_path):
+    """Pre-resized EyePACS copies: <split>/<grade>/<patient>_<eye>.jpeg, no CSV.
+    The copy's own split is ignored and both eyes of a patient stay together."""
+    import cv2
+    import numpy as np
+
+    from retina.manifests import build_eyepacs
+
+    rng = np.random.default_rng(0)
+    img = np.zeros((64, 64, 3), np.uint8)
+    cv2.circle(img, (32, 32), 28, (40, 90, 200), -1)
+    for patient in range(40):
+        for eye in ("left", "right"):
+            # the copy's own split puts the two eyes in different folders
+            split = "train" if eye == "left" else ["val", "test"][patient % 2]
+            grade = int(rng.integers(0, 5))
+            d = tmp_path / "EYEPACS_512_final" / split / str(grade)
+            d.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(d / f"{patient + 10}_{eye}.jpeg"), img)
+
+    df = build_eyepacs(tmp_path, val_frac=0.2)
+    assert len(df) == 80
+    assert set(df["split"]) == {"train", "val"}
+    assert (df.groupby("patient_id")["split"].nunique() == 1).all()
+    for _, r in df.iterrows():
+        assert r["image_path"].split("/")[-2] == str(r["grade"])

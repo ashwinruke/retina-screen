@@ -332,31 +332,65 @@ def build_aptos(
     return _finish(df, "aptos")
 
 
+def _eyepacs_from_folders(roots: list[Path]) -> pd.DataFrame:
+    """Labels from the folder an image sits in: .../<split>/<grade 0-4>/<name>.jpeg.
+
+    Pre-resized Kaggle copies of EyePACS often ship like this instead of with
+    the original CSVs. The copy's own train/val/test folders are ignored; the
+    caller re-splits by patient.
+    """
+    rows = []
+    for root in roots:
+        for p in root.rglob("*"):
+            if p.suffix.lower() in IMAGE_EXTS and p.is_file() and p.parent.name in {"0", "1", "2", "3", "4"}:
+                rows.append({"image_id": p.stem, "grade": int(p.parent.name), "image_path": str(p)})
+    df = pd.DataFrame(rows, columns=["image_id", "grade", "image_path"])
+    if df.empty:
+        return df
+    # The same image listed twice: keep one copy, or drop both if the grades disagree.
+    conflicting = df.groupby("image_id")["grade"].transform("nunique") > 1
+    if conflicting.any():
+        log.warning("EyePACS: dropping %d images filed under more than one grade.", int(conflicting.sum()))
+    df = df[~conflicting].drop_duplicates("image_id")
+    return df.reset_index(drop=True)
+
+
 def build_eyepacs(
     roots: str | Path | Sequence[str | Path],
     val_frac: float = 0.05,
     include_test_labels: bool = True,
     seed: int = 42,
 ) -> pd.DataFrame:
-    """Kaggle EyePACS 2015: trainLabels*.csv (image, level), plus
-    retinopathy_solution.csv for the released test labels if present.
+    """Kaggle EyePACS 2015, in either layout:
 
-    Split train/val by patient: "10_left" and "10_right" share patient "10".
+    * the original release: trainLabels*.csv (image, level), plus
+      retinopathy_solution.csv for the released test labels if present;
+    * a pre-resized copy with one folder per grade (.../0/ ... .../4/).
+
+    All labelled images are pooled and re-split train/val by patient:
+    "10_left" and "10_right" share patient "10", so a patient's two eyes
+    never land on both sides.
     """
     roots = _as_paths(roots)
     csvs = find_label_csvs(roots, {"image", "level"})
     if not include_test_labels:
         csvs = [p for p in csvs if "solution" not in p.name.lower()]
-    if not csvs:
-        raise RuntimeError("EyePACS: no CSV with columns image, level found.")
-    log.info("EyePACS label files: %s", [p.name for p in csvs])
-    df = pd.concat(
-        [_clean_columns(pd.read_csv(p))[["image", "level"]] for p in csvs], ignore_index=True
-    )
-    df = df.drop_duplicates("image")
-    df = df.rename(columns={"image": "image_id", "level": "grade"})
-    df["image_id"] = df["image_id"].astype(str)
-    df = _attach_paths(df, index_images(roots), "EyePACS")
+    if csvs:
+        log.info("EyePACS label files: %s", [p.name for p in csvs])
+        df = pd.concat(
+            [_clean_columns(pd.read_csv(p))[["image", "level"]] for p in csvs], ignore_index=True
+        )
+        df = df.drop_duplicates("image")
+        df = df.rename(columns={"image": "image_id", "level": "grade"})
+        df["image_id"] = df["image_id"].astype(str)
+        df = _attach_paths(df, index_images(roots), "EyePACS")
+    else:
+        df = _eyepacs_from_folders(roots)
+        if df.empty:
+            raise RuntimeError(
+                "EyePACS: found neither a CSV with columns image, level nor image folders named 0-4."
+            )
+        log.info("EyePACS: labels taken from grade folders (0-4); %d images.", len(df))
     df["patient_id"] = df["image_id"].str.rsplit("_", n=1).str[0]
 
     splitter = GroupShuffleSplit(n_splits=1, test_size=val_frac, random_state=seed)
