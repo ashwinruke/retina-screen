@@ -20,17 +20,17 @@ runs the model in your browser, so photos are never uploaded.
 ## Results
 
 All numbers below come from one model: EfficientNet-B3 at 512 px, ImageNet
-weights, trained 15 epochs on APTOS on one Kaggle T4 (~18 min). Cut points
-between grades were fit on APTOS validation data and then frozen.
+weights, trained 15 epochs on APTOS on one Kaggle T4 (~18 min). The cut points
+between grades were fit on APTOS validation data, with every grade band at
+least 0.5 wide, and then frozen.
 
 | | APTOS test | IDRiD, all images | IDRiD official test |
 |---|---|---|---|
 | Images | 523 | 516 | 103 |
 | Source | same as training | **new clinic and camera** | subset of the 516 |
-| Quadratic weighted kappa | **0.920** | **0.787** | 0.682 |
-| Accuracy (5 grades) | 0.820 | 0.570 | 0.495 |
+| Quadratic weighted kappa | **0.922** | **0.769** | 0.646 |
 | Referable DR: ROC-AUC | **0.985** | **0.960** | 0.904 |
-| Referable DR: sensitivity / specificity | 0.951 / 0.903 | 0.830 / 0.964 | 0.813 / 0.872 |
+| Referable DR: sensitivity / specificity | 0.951 / 0.903 | 0.830 / 0.964 | 0.812 / 0.872 |
 
 Referable DR = grade ≥ 2 (moderate or worse), the threshold for referral to an
 eye specialist. The APTOS test split is 15% of the APTOS training set held out
@@ -55,18 +55,22 @@ IDRiD was never used for training, model selection or tuning.
 What it shows:
 
 - **Screening transfers; exact grading drops.** Referable-DR AUC only falls from
-  0.985 to 0.960 on a new clinic and camera, but QWK falls from 0.920 to 0.787.
+  0.985 to 0.960 on a new clinic and camera, but QWK falls from 0.922 to 0.769.
   The model still tells "refer" from "don't refer" well; it's less sure of the
   exact grade.
-- **Severe disease is under-graded.** 58 of 93 severe (grade 3) eyes are
-  called moderate, so only 9% are graded correctly. They are still flagged as
-  referable, but without the urgency they need. Severe is rare in APTOS (5% of
-  images) and common in IDRiD (18%).
-- **Tuned cut points don't transfer.** The default cut points (0.5 / 1.5 / 2.5 / 3.5)
-  score better on IDRiD than the tuned ones (QWK 0.797 vs 0.787), and severe
-  recall rises from 9% to 46%. Tuning fit a severe band only 0.19 wide
-  (2.79–2.97) to the 25 severe eyes in APTOS validation; with so few examples
-  the fit is unstable, and it fails under a change of population.
+- **Severe disease is under-graded.** Only 30% of the 93 severe (grade 3) eyes
+  get the right grade; most of the rest are called moderate. They are still
+  flagged as referable, but without the urgency they need. Severe is rare in
+  APTOS (5% of images) and common in IDRiD (18%).
+- **Cut points tuned on one population are fragile.** The first version of the
+  tuning squeezed the severe band to 0.19 wide (fit to only 25 severe eyes in
+  APTOS validation), and only 9% of IDRiD's severe eyes were graded correctly.
+  Requiring every band to be at least 0.5 wide raised that to 30%, but moved
+  the proliferative cut-off up to 3.5, so IDRiD QWK went from 0.787 to 0.769.
+  The plain default cut points (0.5 / 1.5 / 2.5 / 3.5) do best on IDRiD
+  (QWK 0.797, severe recall 46%). The referable-DR AUC (0.960) is the same in
+  all three cases: the model's ranking of eyes doesn't change, only where the
+  grade boundaries fall.
 - **The 103-image official test set is small** (5 mild, 13 proliferative eyes),
   so its numbers swing by several points with a handful of predictions. The
   516-image figure is the headline.
@@ -77,7 +81,7 @@ _Filled in as each step lands._
 
 | Run | APTOS test QWK | IDRiD QWK | IDRiD referable AUC | IDRiD sens / spec |
 |---|---|---|---|---|
-| A0 · ImageNet → APTOS | 0.920 | 0.787 | 0.960 | 0.830 / 0.964 |
+| A0 · ImageNet → APTOS | 0.922 | 0.769 | 0.960 | 0.830 / 0.964 |
 | **A1 · EyePACS → APTOS (main)** | | | | |
 | A2 · A1 without Ben Graham | | | | |
 | A3 · A1 with classification head | | | | |
@@ -85,7 +89,7 @@ _Filled in as each step lands._
 
 QWK = quadratic weighted kappa. IDRiD columns use all 516 images, except A4,
 which trains on IDRiD's 413 training images and reports on its 103 test images
-(A0 on those 103: QWK 0.682).
+(A0 on those 103: QWK 0.646).
 
 ## Data cleaning
 
