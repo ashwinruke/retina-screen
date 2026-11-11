@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUN_FILES = ["best.pt", "history.csv", "train.log", "config.yaml"]
 
 
-def stage(tag: str, runs: list[str], include_last: bool, dest: Path) -> list[Path]:
+def stage(tag: str, runs: list[str], include_last: bool, dest: Path, skip_model: bool = False) -> list[Path]:
     """Copy what should be saved into dest/<tag>/; return the files copied."""
     base = dest / tag
     copied = []
@@ -42,7 +42,8 @@ def stage(tag: str, runs: list[str], include_last: bool, dest: Path) -> list[Pat
             shutil.copy(src, target)
             copied.append(target)
 
-    put(ROOT / "outputs" / "model.pt", "model.pt")
+    if not skip_model:
+        put(ROOT / "outputs" / "model.pt", "model.pt")
     for run in runs:
         run_dir = ROOT / "outputs" / run
         if not run_dir.is_dir():
@@ -91,6 +92,8 @@ def main() -> None:
     ap.add_argument("--tag", help="Name for this set of results, e.g. mvp, eyepacs-pretrain")
     ap.add_argument("--run", nargs="*", default=[], help="Run folders under outputs/ to save (push)")
     ap.add_argument("--include-last", action="store_true", help="Also save last.pt (needed to resume training)")
+    ap.add_argument("--skip-model", action="store_true",
+                    help="Don't save outputs/model.pt (e.g. mid-pipeline, when it belongs to an older run)")
     ap.add_argument("--repo", help="Hugging Face repo id (default <user>/retina-screen-runs)")
     ap.add_argument("--dry-run", action="store_true", help="push: stage files locally and list them")
     args = ap.parse_args()
@@ -100,7 +103,7 @@ def main() -> None:
 
     if args.action == "push" and args.dry_run:
         tmp = Path(tempfile.mkdtemp(prefix="artifacts_"))
-        for p in stage(args.tag, args.run, args.include_last, tmp):
+        for p in stage(args.tag, args.run, args.include_last, tmp, args.skip_model):
             print(f"  {p.relative_to(tmp)}  ({p.stat().st_size / 2**20:.1f} MB)")
         shutil.rmtree(tmp)
         return
@@ -121,7 +124,7 @@ def main() -> None:
     if args.action == "push":
         api.create_repo(repo, repo_type="model", private=True, exist_ok=True)
         tmp = Path(tempfile.mkdtemp(prefix="artifacts_"))
-        files = stage(args.tag, args.run, args.include_last, tmp)
+        files = stage(args.tag, args.run, args.include_last, tmp, args.skip_model)
         api.upload_folder(folder_path=str(tmp), repo_id=repo, repo_type="model",
                           commit_message=f"Save results: {args.tag}")
         shutil.rmtree(tmp)
