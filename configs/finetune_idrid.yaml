@@ -1,29 +1,28 @@
-# Ablation A4 (optional stage 3): adapt the stage 2 model to IDRiD with its
-# 413 training images, then report on the 103 official test images.
-# IDRiD has no separate val set and the test split must stay untouched, so
-# "validation" here is just the train split (a progress signal, not model
-# selection). Train a fixed, small number of epochs and evaluate last.pt on the
-# IDRiD test split.
+# Ablation A4: adapt A1 to a new clinic with a little local data.
+# IDRiD's 413 training images are split 80/20 by scripts/make_local_split.py
+# (stratified by grade): ~330 to train on, ~83 to pick the epoch and fit the
+# cut points. The 103 official test images are only used for the final score.
 experiment:
   name: finetune_idrid
   out_dir: outputs
 data:
-  manifest: cache/idrid.csv
+  manifest: cache/idrid_local.csv
   train_splits: [train]
-  val_splits: [train]
+  val_splits: [val]
 preprocess:
   size: 512
   ben_graham: true
 model:
   backbone: efficientnet_b3
   head: regression
-  pretrained: false
+  pretrained: false   # weights come from init_from
 train:
-  init_from: outputs/finetune_aptos/best.pt
+  init_from: outputs/finetune_aptos/best.pt   # A1
   image_size: 512
-  epochs: 5
+  epochs: 10
   batch_size: 16
-  lr: 1.0e-4
+  lr: 1.0e-4          # low: adapt, don't relearn
   backbone_lr_mult: 0.3
   warmup_epochs: 0
-  sampler_power: 0.0
+  freeze_epochs: 0
+  sampler_power: 0.0  # IDRiD's grade mix is fairly even already

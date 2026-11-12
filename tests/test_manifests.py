@@ -137,3 +137,15 @@ def test_eyepacs_grade_folder_layout(tmp_path):
     assert (df.groupby("patient_id")["split"].nunique() == 1).all()
     for _, r in df.iterrows():
         assert r["image_path"].split("/")[-2] == str(r["grade"])
+
+
+def test_make_local_split(manifests_dir, tmp_path):
+    from conftest import ROOT, run
+
+    run(ROOT / "scripts/make_local_split.py", "--manifest", manifests_dir / "idrid.csv",
+        "--out", tmp_path / "local.csv", "--val-frac", 0.25)
+    before = pd.read_csv(manifests_dir / "idrid.csv")
+    after = pd.read_csv(tmp_path / "local.csv")
+    assert after["split"].value_counts().to_dict() == {"train": 15, "test": 10, "val": 5}
+    # the official test set is untouched
+    assert set(after[after.split == "test"].image_id) == set(before[before.split == "test"].image_id)
