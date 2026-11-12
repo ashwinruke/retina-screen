@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NO_ALBUMENTATIONS_UPDATE: "1"   # skip albumentations' online version check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (CPU-only PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install timm albumentations opencv-python-headless numpy pandas scikit-learn \
+                      matplotlib pyyaml pytest onnx onnxscript onnxruntime
+      - name: Run tests
+        run: pytest -q

@@ -1,5 +1,8 @@
 # Retinal Disease Screening — Project Plan
 
+> This is the plan as written before building. Section 11 at the end records
+> what changed along the way and which expectations didn't hold.
+
 Automated diabetic retinopathy (DR) grading from colour fundus photographs, with
 visual explanations and a public demo. The model is pretrained on a large noisy
 dataset (EyePACS), fine-tuned on a cleaner one (APTOS), and tested on a dataset
@@ -223,3 +226,68 @@ The datasets have their own terms (Kaggle competition rules for EyePACS and
 APTOS; CC BY 4.0 for IDRiD). Don't commit images to the repo or bundle them in
 the Space — link to the sources instead. Check the EyePACS/APTOS competition
 rules before publishing model weights publicly.
+
+## 11. What actually happened
+
+### Results against the milestones
+
+| # | Milestone | Outcome |
+|---|---|---|
+| M1 | Data plumbing | Done, after fixing the data bugs below |
+| M2 | APTOS-only baseline (A0) | APTOS test QWK 0.922 (target ≥ 0.88) |
+| M3 | EyePACS pretraining | EyePACS val QWK 0.835 (target ≥ 0.75), 8 epochs instead of 12 |
+| M4 | Fine-tune (A1) | APTOS test QWK 0.937 (target ≥ 0.90); IDRiD QWK 0.851 |
+| M5 | Ablations A2-A4 | Done; two expectations didn't hold (below) |
+| M6 | Explainability | Pointing game 86% vs 39% chance on IDRiD lesion masks |
+| M7 | Demo | Live, but in-browser instead of a Gradio server |
+| M8 | Write-up | README |
+
+### Data problems found and fixed
+
+- **APTOS `sample_submission.csv`** has the same columns as `train.csv`, with
+  every diagnosis set to 0. It was read as labels, adding 1,928 unlabelled
+  images as "grade 0" and invalidating the first results. Submission
+  templates are now skipped.
+- **Duplicate detection** went through three versions. A 64-bit image hash
+  wrongly merged different eyes and missed real copies; a fine-detail
+  fingerprint then chained matches into a 90-image group spanning all grades.
+  The final version needs both fine detail and overall layout to match, with
+  no chaining: 97 extra copies and 79 conflicting-label images removed,
+  3,486 of 3,662 kept.
+- **IDRiD test images restart at `IDRiD_001`**, so names repeat across the
+  training and test folders. Labels are now matched to images within their
+  own split folder.
+- **The EyePACS copy used** stores grades as folder names, not a CSV, and its
+  own train/val/test split can separate a patient's two eyes. All 88k images
+  are pooled and re-split by patient.
+
+### Engineering changes
+
+- **Ben Graham normalisation left bands** where the retina meets a black
+  border (most visible on photos whose top and bottom are cut off). The local
+  average now uses retina pixels only.
+- **`nn.DataParallel` over Kaggle's two T4s** ran about 40x slower than one
+  GPU and crashed with a segmentation fault; training uses one GPU.
+- **Kaggle wipes `/kaggle/working`** between sessions, which twice cost a
+  trained model. Every run now saves its model, reports and splits to a
+  private Hugging Face repo (`scripts/artifacts.py`).
+- **The demo runs in the browser.** Hugging Face stopped offering free Gradio
+  Spaces to new accounts, so the model is exported to ONNX with the
+  preprocessing and a closed-form Grad-CAM inside the graph, and served from a
+  free static Space. Photos never leave the visitor's device.
+- **Cut-point tuning got a minimum band width of 0.5.** Unconstrained tuning
+  squeezed the severe band to 0.19 wide (fit to 25 validation eyes), which
+  graded only 9% of IDRiD's severe eyes correctly.
+
+### Expectations that didn't hold
+
+- **"Ben Graham normalisation matters most for cross-dataset
+  generalisation."** It made no measurable difference (A2): APTOS was a tie,
+  and on IDRiD the differences pointed both ways within noise.
+- **The single severity score would beat a 5-class head on QWK** (section 1).
+  On APTOS they tied (A3).
+  The single severity score's advantage showed up only at the new clinic,
+  where the 5-class head missed 12 points more referable eyes.
+- **Fine-tuning on local data would be what closes the gap** (A4). Refitting
+  only the cut points on 83 local photos did as much; retraining added nothing.
+  The gap at a new clinic turned out to be calibration, not recognition.

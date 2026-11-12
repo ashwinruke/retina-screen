@@ -1,21 +1,38 @@
 # Retinal DR Screening
 
-Diabetic retinopathy grading from fundus photographs, built to generalise
-beyond the dataset it was trained on:
+[![tests](https://github.com/ashwinruke/retina-screen/actions/workflows/tests.yml/badge.svg)](https://github.com/ashwinruke/retina-screen/actions/workflows/tests.yml)
+[![demo](https://img.shields.io/badge/demo-Hugging%20Face%20Space-blue)](https://huggingface.co/spaces/ashwinruke/retina-dr-screening)
 
-- **Pretrained** on Kaggle EyePACS 2015 (~88k images)
-- **Fine-tuned** on APTOS 2019 (3.6k images, Aravind Eye Hospital)
-- **Externally tested** on IDRiD (516 images, a different Indian clinic and camera, never seen in training)
-- **Explained** with Grad-CAM heatmaps
-- **Demo** on Hugging Face Spaces
+Grades diabetic retinopathy (0–4) from a colour fundus photo and decides
+whether the eye needs referral to a specialist. Built to work beyond the
+clinic it was trained on: pretrained on 88k EyePACS photos, fine-tuned on
+APTOS 2019, and tested on IDRiD, a different Indian clinic and camera it never
+saw during training.
+
+![Photo, Grad-CAM heatmap, and clinicians' lesion outlines for an IDRiD eye](docs/figures/hero.png)
+
+**Key findings**
+
+- **It holds up at a new clinic.** On IDRiD the model reaches a quadratic
+  weighted kappa of 0.851 and a referable-DR AUC of 0.985. Pretraining on
+  EyePACS cut the drop from the training clinic to the new one by more than
+  half (0.153 → 0.086 QWK).
+- **It looks at lesions, not shortcuts.** The heatmap's hottest point lands on
+  a clinician-outlined lesion in 86% of 81 IDRiD photos (39% by chance), and the
+  optic disc gets almost no attention.
+- **The remaining gap is calibration, not recognition.** The model ranks new
+  eyes correctly but scores them lower. Refitting the grade cut points on 83
+  local photos raised severe-DR recall from 16% to 68%; retraining on 330
+  added nothing more.
+- **Two expected wins didn't hold**, and are reported as such: Ben Graham
+  colour normalisation made no measurable difference, and a 5-class head
+  matched the severity score on APTOS but missed 12 points more referable eyes
+  on IDRiD.
+
+**Live demo:** [huggingface.co/spaces/ashwinruke/retina-dr-screening](https://huggingface.co/spaces/ashwinruke/retina-dr-screening).
+The model runs in your browser (ONNX Runtime Web), so photos are never uploaded.
 
 > Research project, not a medical device.
-
-**Status:** baseline, EyePACS pretraining, external test on IDRiD, explainability
-check, local adaptation (A4), ablations (A2, A3) and live demo done (results below).
-
-**Live demo:** [huggingface.co/spaces/ashwinruke/retina-dr-screening](https://huggingface.co/spaces/ashwinruke/retina-dr-screening)
-runs the model in your browser, so photos are never uploaded.
 
 ## Results
 
@@ -275,22 +292,19 @@ python scripts/train.py --config configs/smoke.yaml
 pytest
 ```
 
-### Real training on Kaggle
+### Reproducing the results on Kaggle
 
-Open [`notebooks/kaggle_pipeline.ipynb`](notebooks/kaggle_pipeline.ipynb) on
-Kaggle, attach the three datasets, turn on GPU T4 x2 and Internet, and run it.
-The steps it runs:
+The notebooks in [`notebooks/`](notebooks/) are the ones the results came
+from. Kaggle wipes a session's files when it ends, so every run saves its
+results to a private Hugging Face repo with `scripts/artifacts.py` and the
+next session restores them instead of retraining.
 
-```bash
-python scripts/prepare_data.py --aptos ... --eyepacs ... --idrid ... --out-dir data/manifests
-python scripts/cache_images.py --manifest data/manifests/eyepacs.csv --out-dir cache --config configs/pretrain_eyepacs.yaml
-python scripts/train.py --config configs/pretrain_eyepacs.yaml        # stage 1 (resumable: --resume .../last.pt)
-python scripts/train.py --config configs/finetune_aptos.yaml          # stage 2
-python scripts/artifacts.py push --tag <name> --run <run folders>     # save results (Kaggle wipes outputs)
-python scripts/evaluate.py --checkpoint outputs/finetune_aptos/best.pt --manifest cache/aptos.csv --splits test \
-    --fit-manifest cache/aptos.csv --fit-splits val --export outputs/model.pt
-python scripts/evaluate.py --checkpoint outputs/model.pt --manifest cache/idrid.csv --splits all --name idrid
-```
+| Notebook | What it does | Time on a T4 |
+|---|---|---|
+| `01_baseline_a0.ipynb` | Data cleaning, A0 training, APTOS + IDRiD evaluation, demo deploy | ~45 min |
+| `02_restore_session.ipynb` | Start of every later session: restore saved results and caches | ~10 min |
+| `03_eyepacs_pretrain_a1.ipynb` | EyePACS pretraining + APTOS fine-tuning (A1); run with *Save & Run All* | ~6 h |
+| `04_ablations.ipynb` | A2, A3, A4 and the Grad-CAM lesion check | ~1.5 h |
 
 Any config value can be overridden on the command line, e.g.
 `python scripts/train.py --config configs/finetune_aptos.yaml model.backbone=convnext_tiny train.epochs=20`.
@@ -318,14 +332,17 @@ HF_TOKEN=... python scripts/deploy_space.py --space <user>/retina-dr-screening
 
 ```
 configs/      one YAML per experiment (stage 1, stage 2, baseline, IDRiD adaptation, smoke test)
-src/retina/   preprocess · manifests · data · model · engine (train/predict) · metrics · gradcam
+src/retina/   preprocess · manifests · data · model · engine (train/predict) · metrics
+              gradcam · explain · export (ONNX)
 scripts/      prepare_data · cache_images · train · evaluate · plot_results · explain
-              export_onnx · deploy_space · artifacts · benchmark_gpu · make_synthetic · build_space.sh
+              export_onnx · deploy_space · artifacts · make_local_split · benchmark_gpu
+              make_synthetic · build_space.sh
 web/          in-browser demo (static page + ONNX model)
 app/          the same demo as a Gradio app
-notebooks/    Kaggle notebook running the full pipeline
+notebooks/    the Kaggle notebooks the results came from (01-04)
+.github/      CI: runs the tests on every push
 tests/        unit tests + end-to-end test on synthetic data
-docs/PLAN.md  project plan, design decisions, milestones
+docs/PLAN.md  the original plan, and what changed while building it
 docs/figures/ result figures used in this README
 ```
 
@@ -339,8 +356,18 @@ The datasets are not included. Get them from their sources and follow their term
 
 ## Limitations
 
-- One image per eye, one model; no ensembling.
-- Grades only DR; doesn't detect glaucoma, AMD or other conditions, and doesn't
-  judge image quality.
-- EyePACS labels are noisy; APTOS and IDRiD are small. The IDRiD result is the
-  honest estimate of performance on a new clinic, and it is lower than APTOS test.
+- **Severe DR is under-graded at a new clinic** unless the cut points are refit
+  on local photos (see A4). Those eyes are still flagged as referable.
+- **Small external test sets.** IDRiD has 516 graded photos (103 in its official
+  test set); differences under ~0.02 QWK on 516, or ~0.05 on 103, are within
+  noise. Every comparison here is a single training run.
+- **One image per eye, one model**, no ensembling. EyePACS labels are noisy.
+- **Grades DR only.** It doesn't detect glaucoma, AMD or other conditions, and
+  doesn't judge whether a photo is good enough to grade.
+- **Grad-CAM is coarse** (a 16 x 16 grid), so it can't point at individual
+  microaneurysms, and its maps for grade-0 eyes are noise.
+
+## License
+
+The code is MIT-licensed (see [LICENSE](LICENSE)). The datasets and anything
+trained on them follow the datasets' own terms (above).
