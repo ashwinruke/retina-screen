@@ -24,31 +24,37 @@ def read_rgb(path: str | Path) -> np.ndarray:
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 
-def crop_to_fundus(img: np.ndarray, threshold: int = 10) -> np.ndarray:
-    """Remove the black border around the retina.
+def fundus_box(img: np.ndarray, threshold: int = 10) -> tuple[int, int, int, int]:
+    """(y0, y1, x0, x1) of the retina: rows/columns brighter than ``threshold``.
 
-    Rows/columns whose brightest pixel stays under ``threshold`` are dropped.
     If almost nothing is brighter than the threshold (a nearly black,
-    ungradable image), the image is returned unchanged.
+    ungradable image), the whole image is returned.
     """
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     mask = gray > threshold
     if mask.mean() < 0.01:
-        return img
+        return 0, img.shape[0], 0, img.shape[1]
     rows = np.flatnonzero(mask.any(axis=1))
     cols = np.flatnonzero(mask.any(axis=0))
-    return img[rows[0] : rows[-1] + 1, cols[0] : cols[-1] + 1]
+    return int(rows[0]), int(rows[-1]) + 1, int(cols[0]), int(cols[-1]) + 1
+
+
+def crop_to_fundus(img: np.ndarray, threshold: int = 10) -> np.ndarray:
+    """Remove the black border around the retina (see ``fundus_box``)."""
+    y0, y1, x0, x1 = fundus_box(img, threshold)
+    return img[y0:y1, x0:x1]
 
 
 def pad_to_square(img: np.ndarray, value: int = 0) -> np.ndarray:
     """Centre the image on a square canvas.
 
     Some fundus photos clip the top and bottom of the retina; padding (rather
-    than stretching) keeps the circle round.
+    than stretching) keeps the circle round. Works for colour images and
+    single-channel masks.
     """
     h, w = img.shape[:2]
     side = max(h, w)
-    out = np.full((side, side, 3), value, dtype=img.dtype)
+    out = np.full((side, side) + img.shape[2:], value, dtype=img.dtype)
     y, x = (side - h) // 2, (side - w) // 2
     out[y : y + h, x : x + w] = img
     return out
@@ -128,6 +134,21 @@ def crop_and_resize(img: np.ndarray, size: int) -> np.ndarray:
     """Crop the border, pad to square and resize. No colour normalisation."""
     img = pad_to_square(crop_to_fundus(img))
     return cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+
+
+def align_mask(mask: np.ndarray, photo: np.ndarray, size: int) -> np.ndarray:
+    """Put a mask drawn on the original photo into the model's 512 x 512 frame.
+
+    The crop box comes from the photo, so the mask gets exactly the same crop,
+    padding and resize as the image the model sees. A pixel is marked if any
+    part of it was marked in the original, so tiny lesions such as
+    microaneurysms survive the downscale.
+    """
+    if mask.shape[:2] != photo.shape[:2]:
+        raise ValueError(f"Mask {mask.shape[:2]} and photo {photo.shape[:2]} differ in size.")
+    y0, y1, x0, x1 = fundus_box(photo)
+    m = pad_to_square((mask[y0:y1, x0:x1] > 0).astype(np.float32))
+    return cv2.resize(m, (size, size), interpolation=cv2.INTER_AREA) > 0
 
 
 def preprocess_fundus(

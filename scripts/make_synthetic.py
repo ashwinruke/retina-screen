@@ -16,7 +16,9 @@ import numpy as np
 import pandas as pd
 
 
-def fake_fundus(grade: int, rng: np.random.Generator, h: int = 300, w: int = 400) -> np.ndarray:
+def fake_fundus(
+    grade: int, rng: np.random.Generator, h: int = 300, w: int = 400, disc_out: list | None = None
+) -> np.ndarray:
     img = np.zeros((h, w, 3), np.uint8)
     r = int(min(h, w) * rng.uniform(0.42, 0.48))
     cx, cy = w // 2 + int(rng.integers(-10, 10)), h // 2 + int(rng.integers(-5, 5))
@@ -31,6 +33,8 @@ def fake_fundus(grade: int, rng: np.random.Generator, h: int = 300, w: int = 400
         end = (int(cx + r * 0.9 * np.cos(angle)), int(cy + r * 0.9 * np.sin(angle)))
         cv2.line(img, disc, end, (20, 30, 120), thick)
     cv2.circle(img, disc, max(4, r // 7), (150, 220, 250), -1)
+    if disc_out is not None:
+        disc_out.append((disc, max(4, r // 7)))
     for _ in range(grade * 8):  # "lesions"
         a, d = rng.uniform(0, 2 * np.pi), rng.uniform(0, r * 0.8)
         p = (int(cx + d * np.cos(a)), int(cy + d * np.sin(a)))
@@ -111,6 +115,35 @@ def make_idrid(root: Path, n_train: int, n_test: int, rng) -> None:
         ).to_csv(gt / f"{letter}. IDRiD_Disease Grading_{split} Labels.csv", index=False)
 
 
+def make_idrid_segmentation(root: Path, n_train: int, n_test: int, rng) -> None:
+    """IDRiD's segmentation part: photos plus one .tif mask per lesion type,
+    drawn at exactly the lesion positions."""
+    base = root / "A. Segmentation"
+    for split, n, letter, offset in (("Training", n_train, "a", 0), ("Testing", n_test, "b", n_train)):
+        img_dir = base / "1. Original Images" / f"{letter}. {split} Set"
+        gt = base / "2. All Segmentation Groundtruths" / f"{letter}. {split} Set"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            name = f"IDRiD_{offset + i + 1:02d}"
+            disc_info: list = []
+            img = fake_fundus(0, rng, 600, 800, disc_out=disc_info)
+            masks = {k: np.zeros(img.shape[:2], np.uint8) for k in ("MA", "HE", "EX", "OD")}
+            for kind, colour, radius, count in (("MA", (30, 30, 150), 3, 6), ("HE", (20, 20, 110), 9, 3),
+                                                ("EX", (120, 230, 240), 6, 5)):
+                for _ in range(count):
+                    a, d = rng.uniform(0, 2 * np.pi), rng.uniform(0, 200)
+                    c = (int(400 + d * np.cos(a)), int(300 + d * np.sin(a)))
+                    cv2.circle(img, c, radius, colour, -1)
+                    cv2.circle(masks[kind], c, radius, 255, -1)
+            cv2.circle(masks["OD"], disc_info[0][0], disc_info[0][1], 255, -1)
+            cv2.imwrite(str(img_dir / f"{name}.jpg"), img)
+            folders = {"MA": "1. Microaneurysms", "HE": "2. Haemorrhages", "EX": "3. Hard Exudates", "OD": "5. Optic Disc"}
+            for kind, m in masks.items():
+                d = gt / folders[kind]
+                d.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(str(d / f"{name}_{kind}.tif"), m)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="data/synthetic")
@@ -125,6 +158,7 @@ def main() -> None:
     make_aptos(out / "aptos", args.aptos, rng)
     make_eyepacs(out / "eyepacs", args.eyepacs_patients, rng)
     make_idrid(out / "idrid", *args.idrid, rng)
+    make_idrid_segmentation(out / "idrid", 4, 2, rng)
     print(f"Synthetic datasets written to {out}")
 
 
