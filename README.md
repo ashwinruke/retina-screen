@@ -12,8 +12,7 @@ beyond the dataset it was trained on:
 > Research project, not a medical device.
 
 **Status:** baseline, EyePACS pretraining, external test on IDRiD, explainability
-check, local adaptation (A4), head comparison (A3) and live demo done (results
-below). Next: ablation A2 (Ben Graham preprocessing).
+check, local adaptation (A4), ablations (A2, A3) and live demo done (results below).
 
 **Live demo:** [huggingface.co/spaces/ashwinruke/retina-dr-screening](https://huggingface.co/spaces/ashwinruke/retina-dr-screening)
 runs the model in your browser, so photos are never uploaded.
@@ -183,15 +182,43 @@ regression version.)
   clinic, not through accuracy on the source data. Single runs each; treat
   differences under ~0.02 QWK as noise.
 
+### Ben Graham normalisation (A2)
+
+A2 repeats A0 exactly (ImageNet → APTOS, same settings and splits) on plain
+cropped photos, without Ben Graham colour normalisation.
+
+| | APTOS test | | IDRiD, all 516 | |
+|---|---|---|---|---|
+| | A0 (normalised) | A2 (plain) | A0 (normalised) | A2 (plain) |
+| Quadratic weighted kappa | 0.922 | 0.920 | 0.769 | 0.750 |
+| Referable DR: ROC-AUC | 0.985 | 0.984 | 0.960 | **0.972** |
+| Referable DR: sensitivity / specificity | 0.951 / 0.903 | 0.931 / 0.925 | **0.830** / 0.964 | 0.734 / 0.995 |
+
+- **No measurable benefit.** The plan expected the normalisation to matter most
+  for a new clinic; it didn't. APTOS is a tie, and on IDRiD the differences
+  point both ways (QWK slightly lower without it, AUC slightly higher; on the
+  103 official test images, QWK 0.688 without vs 0.646 with), all within noise.
+- **The large sensitivity gap is calibration again:** A2's tuned referral
+  cut-off landed at 1.47 instead of 1.30, while its ranking (AUC) is if
+  anything better.
+- A likely reason, untested here: an ImageNet-pretrained network trained with
+  brightness and contrast augmentation already copes with colour differences
+  between cameras. The normalisation stays in the pipeline (it costs nothing
+  and the heatmap check above was done with it), but the README no longer
+  claims it helps.
+
 ### Full comparison
 
-_Filled in as each step lands._
+**Across the ablations, one pattern:** at a new clinic the model's ranking of
+eyes (referable-DR AUC) stays robust, but its score scale shifts. Most
+differences in QWK and sensitivity at frozen cut points come from that shift,
+and refitting the cut points on ~80 local photos corrects much of it (A4a).
 
 | Run | APTOS test QWK | IDRiD QWK | IDRiD referable AUC | IDRiD sens / spec |
 |---|---|---|---|---|
 | A0 · ImageNet → APTOS | 0.922 | 0.769 | 0.960 | 0.830 / 0.964 |
 | **A1 · EyePACS → APTOS (main)** | **0.937** | **0.851** | **0.985** | **0.839 / 0.995** |
-| A2 · A0 without Ben Graham | | | | |
+| A2 · A0 without Ben Graham | 0.920 | 0.750 | 0.972 | 0.734 / 0.995 |
 | A3 · A1 with a 5-class head | 0.943 | 0.819 | 0.982 | 0.715 / 1.000 |
 | A4a · A1 + cut points refit on 83 IDRiD photos (IDRiD test only) | — | 0.822 | 0.956 | 0.812 / 0.949 |
 | A4 · A1 fine-tuned on 330 IDRiD photos + refit (IDRiD test only) | — | 0.803 | 0.956 | 0.844 / 0.923 |
