@@ -12,8 +12,8 @@ beyond the dataset it was trained on:
 > Research project, not a medical device.
 
 **Status:** baseline, EyePACS pretraining, external test on IDRiD, explainability
-check, local adaptation (A4) and live demo done (results below). Next: ablations
-A3 and A2.
+check, local adaptation (A4), head comparison (A3) and live demo done (results
+below). Next: ablation A2 (Ben Graham preprocessing).
 
 **Live demo:** [huggingface.co/spaces/ashwinruke/retina-dr-screening](https://huggingface.co/spaces/ashwinruke/retina-dr-screening)
 runs the model in your browser, so photos are never uploaded.
@@ -156,6 +156,33 @@ steps touch.
   0.05 QWK are within chance; the 16% → 68% severe recall and the unchanged AUC
   are the robust parts.
 
+### One severity score vs five classes (A3)
+
+A3 is A1 with a 5-class head (cross-entropy) instead of one severity score;
+everything else is the same. Its score is the expected grade under its
+predicted probabilities, cut with cut points fit the same way as A1's. (A3's
+head is trained during APTOS fine-tuning only; EyePACS pretraining stayed the
+regression version.)
+
+| | APTOS test | | IDRiD, all 516 | |
+|---|---|---|---|---|
+| | A1 (score) | A3 (5 classes) | A1 (score) | A3 (5 classes) |
+| Quadratic weighted kappa | 0.937 | 0.943 | **0.851** | 0.819 |
+| Referable DR: ROC-AUC | 0.987 | 0.989 | 0.985 | 0.982 |
+| Referable DR: sensitivity / specificity | 0.961 / 0.906 | 0.941 / 0.947 | **0.839** / 0.995 | 0.715 / 1.000 |
+| Severe / proliferative recall | 0.48 / 0.68 | 0.64 / 0.70 | 0.28 / 0.45 | 0.44 / 0.32 |
+
+- **On the training source the head doesn't matter:** 0.943 vs 0.937 QWK is
+  within run-to-run noise (~0.01).
+- **At a new clinic the 5-class head misses more referable eyes:** IDRiD
+  sensitivity falls from 84% to 72% (about 40 more of 323 referable eyes
+  missed) while its AUC stays similar. It ranks eyes about as well, but its
+  scores shift more under the new population, so the frozen referral cut-off
+  fits worse.
+- So the single severity score earns its place through robustness to a new
+  clinic, not through accuracy on the source data. Single runs each; treat
+  differences under ~0.02 QWK as noise.
+
 ### Full comparison
 
 _Filled in as each step lands._
@@ -164,8 +191,8 @@ _Filled in as each step lands._
 |---|---|---|---|---|
 | A0 · ImageNet → APTOS | 0.922 | 0.769 | 0.960 | 0.830 / 0.964 |
 | **A1 · EyePACS → APTOS (main)** | **0.937** | **0.851** | **0.985** | **0.839 / 0.995** |
-| A2 · A1 without Ben Graham | | | | |
-| A3 · A1 with classification head | | | | |
+| A2 · A0 without Ben Graham | | | | |
+| A3 · A1 with a 5-class head | 0.943 | 0.819 | 0.982 | 0.715 / 1.000 |
 | A4a · A1 + cut points refit on 83 IDRiD photos (IDRiD test only) | — | 0.822 | 0.956 | 0.812 / 0.949 |
 | A4 · A1 fine-tuned on 330 IDRiD photos + refit (IDRiD test only) | — | 0.803 | 0.956 | 0.844 / 0.923 |
 
