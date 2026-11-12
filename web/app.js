@@ -185,10 +185,15 @@ function showView(view) {
   const r = state.result;
   if (!r) return;
   state.view = view;
-  const images = { photo: r.photo, heatmap: r.heatmap, seen: r.seen };
+  // With no retinopathy found, nothing raised the score: Grad-CAM would just
+  // stretch leftover noise to full colour, so show the photo instead.
+  const noMap = view === "heatmap" && r.grade === 0;
+  const images = { photo: r.photo, heatmap: noMap ? r.photo : r.heatmap, seen: r.seen };
   drawRGB(images[view], r.size);
-  $("canvas").setAttribute("aria-label", { photo: "Fundus photo", heatmap: "Grad-CAM heatmap over the photo", seen: "Colour-normalised model input" }[view]);
-  $("view-note").textContent = VIEW_NOTES[view];
+  $("canvas").setAttribute("aria-label", { photo: "Fundus photo", heatmap: noMap ? "Fundus photo (no heatmap for grade 0)" : "Grad-CAM heatmap over the photo", seen: "Colour-normalised model input" }[view]);
+  $("view-note").textContent = noMap
+    ? "Nothing in this photo raised the severity score, so there is no heatmap to show."
+    : VIEW_NOTES[view];
 }
 
 const svg = (tag, attrs, text) => {

@@ -11,8 +11,8 @@ beyond the dataset it was trained on:
 
 > Research project, not a medical device.
 
-**Status:** baseline, EyePACS pretraining, external test on IDRiD and live demo
-done (results below). Next: explainability checks and ablations.
+**Status:** baseline, EyePACS pretraining, external test on IDRiD, explainability
+check and live demo done (results below). Next: ablations.
 
 **Live demo:** [huggingface.co/spaces/ashwinruke/retina-dr-screening](https://huggingface.co/spaces/ashwinruke/retina-dr-screening)
 runs the model in your browser, so photos are never uploaded.
@@ -75,6 +75,44 @@ IDRiD's official 103-image test set, QWK rises from 0.646 (A0) to 0.793 (A1).
 | | |
 |---|---|
 | ![A1 IDRiD confusion matrix](docs/figures/a1_idrid_confusion.png) | ![A1 IDRiD referable DR ROC](docs/figures/a1_idrid_roc.png) |
+
+### Does the model look at the right things?
+
+IDRiD includes 81 photos on which clinicians outlined every lesion
+(microaneurysms, haemorrhages, hard and soft exudates) and the optic disc. For
+each photo, A1's Grad-CAM heatmap was compared with those outlines in the
+model's own 512 x 512 frame. Each score has a chance level next to it: what a
+heatmap pointing at random spots on the retina would get.
+
+| Check (81 photos) | A1 | Chance |
+|---|---|---|
+| Hottest point of the heatmap lands on a lesion (16 px tolerance) | **86%** | 39% |
+| Share of the heatmap on lesions | **12.6%** (2.3x chance) | 5.5% (their share of the retina) |
+| Share of the heatmap on the optic disc | **0.1%** | 2.6% |
+| Hottest point on a haemorrhage | 48% | 15% |
+| Hottest point on a hard exudate | 46% | 21% |
+| Hottest point on a microaneurysm | 30% | 16% |
+| Hottest point on a soft exudate (40 photos have them) | 10% | 4% |
+
+- **It looks at lesions, not at shortcuts.** The hottest point lands on a lesion
+  more than twice as often as chance, and the optic disc, a common shortcut for
+  retina models, gets almost no attention.
+- **Haemorrhages and hard exudates draw the most attention**, which fits:
+  they are the larger lesions that mark moderate and severe disease.
+- **Microaneurysms are the weakest match.** They are a few pixels across, while
+  the heatmap comes from a 16 x 16 feature grid (32 pixels per cell), so it
+  can't single them out.
+- The chance level for "hits a lesion" is high (39%) because these photos were
+  chosen for having many lesions, and the tolerance widens each one.
+
+![Grad-CAM on IDRiD, two photos per grade](docs/figures/a1_gradcam_gallery.png)
+
+![Heatmap peaks against clinicians' lesion outlines](docs/figures/a1_gradcam_lesions.png)
+
+For eyes with no retinopathy (grade 0, first column above), nothing raises the
+severity score, so Grad-CAM only stretches leftover noise to full colour, here
+along the edges of the image. Those maps carry no meaning; the demo shows the
+photo instead of a heatmap for grade 0.
 
 ### Cut points are fragile under a change of population
 
@@ -194,8 +232,8 @@ HF_TOKEN=... python scripts/deploy_space.py --space <user>/retina-dr-screening
 ```
 configs/      one YAML per experiment (stage 1, stage 2, baseline, IDRiD adaptation, smoke test)
 src/retina/   preprocess · manifests · data · model · engine (train/predict) · metrics · gradcam
-scripts/      prepare_data · cache_images · train · evaluate · plot_results · export_onnx
-              deploy_space · benchmark_gpu · make_synthetic · build_space.sh
+scripts/      prepare_data · cache_images · train · evaluate · plot_results · explain
+              export_onnx · deploy_space · artifacts · benchmark_gpu · make_synthetic · build_space.sh
 web/          in-browser demo (static page + ONNX model)
 app/          the same demo as a Gradio app
 notebooks/    Kaggle notebook running the full pipeline
