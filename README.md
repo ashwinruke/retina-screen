@@ -12,7 +12,8 @@ beyond the dataset it was trained on:
 > Research project, not a medical device.
 
 **Status:** baseline, EyePACS pretraining, external test on IDRiD, explainability
-check and live demo done (results below). Next: ablations.
+check, local adaptation (A4) and live demo done (results below). Next: ablations
+A3 and A2.
 
 **Live demo:** [huggingface.co/spaces/ashwinruke/retina-dr-screening](https://huggingface.co/spaces/ashwinruke/retina-dr-screening)
 runs the model in your browser, so photos are never uploaded.
@@ -124,6 +125,37 @@ eyes correctly. Requiring every band to be at least 0.5 wide raised that to
 0.797 vs 0.769). The ranking of eyes, and so the referable-DR AUC, doesn't
 depend on the cut points at all; only where the grade boundaries fall does.
 
+### Adapting to a new clinic (A4)
+
+How much local data does a clinic need? IDRiD's 413 training images were split
+into 330 to train on and 83 to fit the cut points (stratified by grade), and
+results are reported on IDRiD's 103 official test images, which none of these
+steps touch.
+
+| On IDRiD's 103 test images | A1 | **A4a: refit cut points** | A4: fine-tune + refit |
+|---|---|---|---|
+| Local data used | none | 83 images | 330 + 83 images |
+| Quadratic weighted kappa | 0.793 | **0.822** | 0.803 |
+| Referable DR: ROC-AUC | 0.956 | 0.956 | 0.956 |
+| Referable DR: sensitivity / specificity | 0.781 / 1.000 | 0.812 / 0.949 | 0.844 / 0.923 |
+| Severe (grade 3) recall | 0.16 | **0.68** | 0.68 |
+| Proliferative (grade 4) recall | 0.54 | 0.62 | 0.62 |
+| Cut points | 0.50 / 1.35 / 2.52 / 3.60 | 0.50 / 1.00 / 1.84 / 3.26 | 0.59 / 1.09 / 2.08 / 3.50 |
+
+- **The gap at a new clinic is calibration, not recognition.** Refitting only
+  the cut points on 83 local photos raised severe recall from 16% to 68% (13 of
+  19 eyes). The refit boundaries are lower (severe starts at 1.84 instead of
+  2.52): A1 ranks IDRiD eyes correctly but scores them lower than APTOS eyes of
+  the same grade. This is the cause of the severe under-grading above.
+- **Retraining added nothing on top.** Fine-tuning on 330 local photos peaked
+  after its first epoch (validation QWK stayed flat for all 10), and the test
+  AUC didn't move. A4's QWK (0.803) is within noise of A4a's (0.822).
+- **In practice,** a clinic adopting this model needs about 80 labelled local
+  photos to recalibrate the grade boundaries, not a retraining pipeline.
+- **The test set is small** (103 images, 19 severe). Differences under about
+  0.05 QWK are within chance; the 16% → 68% severe recall and the unchanged AUC
+  are the robust parts.
+
 ### Full comparison
 
 _Filled in as each step lands._
@@ -134,10 +166,11 @@ _Filled in as each step lands._
 | **A1 · EyePACS → APTOS (main)** | **0.937** | **0.851** | **0.985** | **0.839 / 0.995** |
 | A2 · A1 without Ben Graham | | | | |
 | A3 · A1 with classification head | | | | |
-| A4 · A1 + IDRiD fine-tune (IDRiD test only) | — | | | |
+| A4a · A1 + cut points refit on 83 IDRiD photos (IDRiD test only) | — | 0.822 | 0.956 | 0.812 / 0.949 |
+| A4 · A1 fine-tuned on 330 IDRiD photos + refit (IDRiD test only) | — | 0.803 | 0.956 | 0.844 / 0.923 |
 
-QWK = quadratic weighted kappa. IDRiD columns use all 516 images, except A4,
-which trains on IDRiD's 413 training images and reports on its 103 test images
+QWK = quadratic weighted kappa. IDRiD columns use all 516 images, except the
+A4 rows, which use IDRiD's training images and report on its 103 test images
 (on those 103: A0 QWK 0.646, A1 0.793). EyePACS pretraining reached 0.835
 validation QWK on EyePACS itself; its labels are noisy, so that number is a
 training signal, not a result.
